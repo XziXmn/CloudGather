@@ -1,0 +1,127 @@
+"""
+数据模型定义
+"""
+
+import uuid
+from datetime import datetime
+from typing import Optional, Dict, Any
+from enum import Enum
+
+
+class TaskStatus(Enum):
+    """任务状态枚举"""
+    IDLE = "IDLE"           # 空闲状态
+    QUEUED = "QUEUED"       # 已加入队列，等待执行
+    RUNNING = "RUNNING"     # 正在执行
+    ERROR = "ERROR"         # 执行出错
+
+
+class SyncTask:
+    """同步任务数据模型"""
+    
+    def __init__(
+        self,
+        name: str,
+        source_path: str,
+        target_path: str,
+        interval: int,
+        task_id: Optional[str] = None,
+        status: str = "IDLE",
+        last_run_time: Optional[str] = None,
+        enabled: bool = True,
+        verify_md5: bool = False,
+        recursive: bool = True
+    ):
+        """
+        初始化同步任务
+        
+        Args:
+            name: 任务名称
+            source_path: 源目录路径
+            target_path: 目标目录路径
+            interval: 同步间隔（秒）
+            task_id: 任务唯一标识符（UUID），不提供则自动生成
+            status: 任务状态
+            last_run_time: 上次运行时间（ISO格式字符串）
+            enabled: 是否启用任务
+            verify_md5: 是否进行MD5校验
+            recursive: 是否递归同步子目录
+        """
+        self.id = task_id if task_id else str(uuid.uuid4())
+        self.name = name
+        self.source_path = source_path
+        self.target_path = target_path
+        self.interval = interval
+        self.status = TaskStatus[status] if isinstance(status, str) else status
+        self.last_run_time = last_run_time
+        self.enabled = enabled
+        self.verify_md5 = verify_md5
+        self.recursive = recursive
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        将任务对象转换为字典，用于 JSON 序列化
+        
+        Returns:
+            包含任务所有字段的字典
+        """
+        return {
+            "id": self.id,
+            "name": self.name,
+            "source_path": self.source_path,
+            "target_path": self.target_path,
+            "interval": self.interval,
+            "status": self.status.value,
+            "last_run_time": self.last_run_time,
+            "enabled": self.enabled,
+            "verify_md5": self.verify_md5,
+            "recursive": self.recursive
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SyncTask':
+        """
+        从字典创建任务对象，用于 JSON 反序列化
+        
+        Args:
+            data: 包含任务字段的字典
+            
+        Returns:
+            SyncTask 实例
+        """
+        return cls(
+            task_id=data.get("id"),
+            name=data["name"],
+            source_path=data["source_path"],
+            target_path=data["target_path"],
+            interval=data["interval"],
+            status=data.get("status", "IDLE"),
+            last_run_time=data.get("last_run_time"),
+            enabled=data.get("enabled", True),
+            verify_md5=data.get("verify_md5", False),
+            recursive=data.get("recursive", True)
+        )
+    
+    def update_status(self, new_status: TaskStatus):
+        """
+        更新任务状态
+        
+        Args:
+            new_status: 新的任务状态
+        """
+        self.status = new_status
+    
+    def update_last_run_time(self):
+        """更新上次运行时间为当前时间"""
+        self.last_run_time = datetime.now().isoformat()
+    
+    def __repr__(self) -> str:
+        """字符串表示"""
+        return (
+            f"SyncTask(id={self.id}, name={self.name}, "
+            f"status={self.status.value}, interval={self.interval}s)"
+        )
+    
+    def __str__(self) -> str:
+        """用户友好的字符串表示"""
+        return f"[{self.status.value}] {self.name} ({self.interval}s)"
