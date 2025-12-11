@@ -5,6 +5,7 @@ CloudGather（云集）- 媒体文件同步工具
 
 import atexit
 import os
+import psutil
 import threading
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -24,7 +25,8 @@ scheduler = TaskScheduler(config_path=CONFIG_PATH)
 # 日志存储
 log_lock = threading.Lock()
 MAX_LOGS = 500
-_task_logs: Dict[str, List[str]] = {"general": []}
+_task_logs: Dict[str, List[str]] = {"general": []}  # task_id -> logs
+_current_task_id: Optional[str] = None  # 当前正在执行的任务ID
 
 
 def log_handler(message: str):
@@ -32,14 +34,29 @@ def log_handler(message: str):
     timestamp = datetime.now().strftime('%H:%M:%S')
     entry = f"[{timestamp}] {message}"
     with log_lock:
+        # 添加到全局日志
         logs = _task_logs.setdefault('general', [])
         logs.append(entry)
         if len(logs) > MAX_LOGS:
             _task_logs['general'] = logs[-MAX_LOGS:]
+        
+        # 如果有当前任务，也添加到任务专属日志
+        if _current_task_id:
+            task_logs = _task_logs.setdefault(_current_task_id, [])
+            task_logs.append(entry)
+            if len(task_logs) > MAX_LOGS:
+                _task_logs[_current_task_id] = task_logs[-MAX_LOGS:]
+
+
+def set_current_task(task_id: Optional[str]):
+    """设置当前正在执行的任务ID"""
+    global _current_task_id
+    _current_task_id = task_id
 
 
 # 绑定调度器日志
 scheduler.set_log_callback(log_handler)
+scheduler.set_task_context_callback(set_current_task)
 
 # 启动调度器（幂等）
 def ensure_scheduler_running():
@@ -50,7 +67,7 @@ def ensure_scheduler_running():
 ensure_scheduler_running()
 
 # Flask 应用
-app = Flask(__name__, static_folder='static', template_folder='templates')
+app = Flask(__name__, static_folder='static', template_folder='html')
 
 
 @app.route('/')
@@ -73,12 +90,24 @@ def _parse_bool(value, default=False):
 
 @app.route('/api/status', methods=['GET'])
 def api_status():
+    # 获取系统资源信息
+    memory = psutil.virtual_memory()
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    
     return jsonify({
         'running': scheduler.is_running,
         'queue_size': scheduler.get_queue_size(),
         'task_count': len(scheduler.tasks),
         'config_path': str(CONFIG_PATH),
         'is_docker': IS_DOCKER,
+        # 系统资源
+        'system': {
+            'cpu_percent': cpu_percent,
+            'memory_total': memory.total,
+            'memory_used': memory.used,
+            'memory_percent': memory.percent,
+            'memory_available': memory.available,
+        }
     })
 
 
@@ -178,11 +207,37 @@ def api_stop_scheduler():
     return jsonify({'success': True, 'running': scheduler.is_running})
 
 
+@app.route('/api/queue', methods=['GET'])
+def api_queue():
+    """获取当前任务队列信息"""
+    queue_tasks = []
+    # 获取队列中的任务（不移除）
+    with scheduler.task_queue.mutex:
+        queue_list = list(scheduler.task_queue.queue)
+    
+    for task_id in queue_list:
+        task = scheduler.get_task(task_id)
+        if task:
+            queue_tasks.append(_task_to_dict(task))
+    
+    return jsonify({'queue': queue_tasks})
+
+
 @app.route('/api/logs', methods=['GET'])
 def api_logs():
+    task_id = request.args.get('task_id', 'general')
     with log_lock:
-        logs = list(_task_logs.get('general', []))
+        logs = list(_task_logs.get(task_id, []))
     return jsonify({'logs': logs})
+
+
+@app.route('/api/logs/clear', methods=['POST'])
+def api_clear_logs():
+    task_id = request.args.get('task_id', 'general')
+    with log_lock:
+        if task_id in _task_logs:
+            _task_logs[task_id] = []
+    return jsonify({'success': True})
 
 
 @atexit.register

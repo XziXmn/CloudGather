@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudGather - 云集媒体同步</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root {
+            --bg: #f3f6fb;
+            --panel: #ffffff;
+            --card: #f7f9fc;
+            --text: #0f172a;
+            --muted: #6b7280;
+            --accent: #2563eb;
+            --accent-2: #0ea5e9;
+            --border: rgba(148, 163, 184, 0.35);
+            --shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+            --log-bg: #0f172a;
+            --log-text: #bff0bf;
+        }
+        [data-theme="dark"] {
+            --bg: #0c1424;
+            --panel: #111827;
+            --card: #0f172a;
+            --text: #e5e7eb;
+            --muted: #9ca3af;
+            --accent: #60a5fa;
+            --accent-2: #38bdf8;
+            --border: rgba(255, 255, 255, 0.08);
+            --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+            --log-bg: #0b1120;
+            --log-text: #9af59a;
+        }
+        body {
+            background: radial-gradient(120% 120% at 12% 10%, rgba(37, 99, 235, 0.08), transparent),
+                        radial-gradient(140% 160% at 90% 20%, rgba(14, 165, 233, 0.08), transparent),
+                        var(--bg);
+            color: var(--text);
+            font-family: 'Manrope', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
+        .sidebar {
+            background: linear-gradient(160deg, rgba(37, 99, 235, 0.15), transparent 35%), var(--panel);
+            border-right: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 18px;
+            border-radius: 12px;
+            color: var(--muted);
+            font-weight: 600;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+        .nav-link:hover {
+            color: var(--text);
+            border-color: var(--border);
+            background: linear-gradient(120deg, rgba(37, 99, 235, 0.08), rgba(14, 165, 233, 0.05));
+            transform: translateX(2px);
+        }
+        .nav-link.active {
+            color: var(--text);
+            border-color: rgba(37, 99, 235, 0.4);
+            background: linear-gradient(120deg, rgba(37, 99, 235, 0.15), rgba(14, 165, 233, 0.12));
+            box-shadow: 0 12px 30px rgba(37, 99, 235, 0.18);
+        }
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            border-radius: 18px;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+        }
+        .text-muted { color: var(--muted); }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.3rem 0.8rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 700;
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .log-container {
+            background: var(--log-bg);
+            color: var(--log-text);
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            max-height: 500px;
+            overflow-y: auto;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+        }
+        .log-container::-webkit-scrollbar { width: 8px; }
+        .log-container::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, 0.5);
+            border-radius: 4px;
+        }
+        .btn-primary {
+            background: linear-gradient(120deg, var(--accent), var(--accent-2));
+            color: #fff;
+            border-radius: 12px;
+            padding: 12px 18px;
+            font-weight: 700;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 15px 30px rgba(37, 99, 235, 0.25);
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 18px 36px rgba(37, 99, 235, 0.28); }
+        .btn-ghost {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 16px;
+            color: var(--text);
+            font-weight: 600;
+            transition: all 0.2s ease;
+            background: transparent;
+        }
+        .btn-ghost:hover { background: rgba(148, 163, 184, 0.12); }
+        .icon-button {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 12px;
+            color: var(--text);
+            transition: all 0.2s ease;
+            background: transparent;
+        }
+        .icon-button:hover { background: rgba(148, 163, 184, 0.12); }
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--text);
+        }
+    </style>
+    <script>
+        const savedTheme = localStorage.getItem('cloudgather-theme');
+        if (savedTheme) {
+            document.documentElement.setAttribute('data-theme', savedTheme);
+        }
+    </script>
+</head>
+<body class="min-h-screen">
+    <div class="min-h-screen flex">
+        <!-- 侧边栏 -->
+        <aside class="w-72 sidebar p-6 relative">
+            <div class="flex items-center gap-3 mb-8">
+                <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-blue-500 to-sky-400 flex items-center justify-center text-white text-2xl shadow-lg">
+                    <i class="fas fa-cloud"></i>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-extrabold tracking-tight">CloudGather</h1>
+                    <p class="text-muted text-sm mt-1">云集媒体同步</p>
+                </div>
+            </div>
+            
+            <nav class="space-y-2">
+                <a href="#dashboard" data-section="dashboard" onclick="showSection('dashboard', this)" class="nav-link active">
+                    <i class="fas fa-th-large"></i>
+                    <span>任务面板</span>
+                </a>
+                <a href="#logs" data-section="logs" onclick="showSection('logs', this)" class="nav-link">
+                    <i class="fas fa-file-alt"></i>
+                    <span>实时日志</span>
+                </a>
+                <a href="#settings" data-section="settings" onclick="showSection('settings', this)" class="nav-link">
+                    <i class="fas fa-cog"></i>
+                    <span>系统设置</span>
+                </a>
+            </nav>
+
+            <div class="absolute bottom-6 left-6 right-6 p-4 rounded-xl card" style="border-color: var(--border);">
+                <p class="text-xs text-muted">版本</p>
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-lg">v2.0.0</span>
+                    <span class="text-xs text-muted">Flask · Tailwind</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="flex-1 overflow-auto p-10 space-y-10">
+            <!-- 任务面板 -->
+            <section id="dashboard" class="space-y-8">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <p class="text-sm uppercase tracking-[0.2em] text-muted font-semibold">Overview</p>
+                        <h2 class="text-3xl md:text-4xl font-extrabold mt-2">📋 任务面板</h2>
+                        <p class="text-muted mt-1">管理和监控同步任务，让内容稳定流转。</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button id="themeToggle" class="icon-button flex items-center gap-2">
+                            <i class="fas fa-sun"></i>
+                            <span class="font-semibold">亮色</span>
+                        </button>
+                        <button onclick="showAddTaskModal()" class="btn-primary flex items-center gap-2">
+                            <i class="fas fa-plus"></i>
+                            <span>添加任务</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 统计卡片 -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="card p-5" style="border-color: var(--border);">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-muted text-sm">总任务数</p>
+                                <p id="stat-total" class="text-3xl font-extrabold mt-2">0</p>
+                            </div>
+                            <div class="h-12 w-12 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center text-xl" aria-hidden="true">
+                                <i class="fas fa-layer-group"></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card p-5" style="border-color: var(--border);">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-muted text-sm">运行中</p>
+                                <p id="stat-running" class="text-3xl font-extrabold mt-2 text-emerald-500">0</p>
+                            </div>
+                            <div class="h-12 w-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-xl" aria-hidden="true">
+                                <i class="fas fa-circle-play"></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card p-5" style="border-color: var(--border);">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-muted text-sm">队列中</p>
+                                <p id="stat-queued" class="text-3xl font-extrabold mt-2 text-amber-500">0</p>
+                            </div>
+                            <div class="h-12 w-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center text-xl" aria-hidden="true">
+                                <i class="fas fa-clock"></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card p-5" style="border-color: var(--border);">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-muted text-sm">调度器</p>
+                                <p id="stat-scheduler" class="text-lg font-bold mt-2 text-emerald-500">运行中</p>
+                            </div>
+                            <div class="h-12 w-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-xl" aria-hidden="true">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 任务列表 -->
+                <div class="panel overflow-hidden">
+                    <div class="p-6 border-b" style="border-color: var(--border);">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-xl font-bold">任务列表</h3>
+                                <p class="text-muted text-sm">查看、触发或调整任务配置</p>
+                            </div>
+                            <button onclick="showAddTaskModal()" class="btn-ghost flex items-center gap-2">
+                                <i class="fas fa-plus"></i>
+                                快速添加
+                            </button>
+                        </div>
+                    </div>
+                    <div id="tasks-container" class="p-6">
+                        <div class="text-center py-12 text-muted">
+                            <i class="fas fa-inbox text-5xl mb-3"></i>
+                            <p class="text-lg font-semibold">暂无任务</p>
+                            <p class="text-sm mt-2">点击右上角"添加任务"开始</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 实时日志 -->
+            <section id="logs" class="hidden space-y-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <h2 id="log-title" class="text-3xl font-extrabold">📝 实时日志</h2>
+                        <p class="text-muted mt-1">查看系统运行日志，监控即时状态</p>
+                    </div>
+                    <button onclick="clearLogs()" class="btn-ghost flex items-center gap-2 text-red-500">
+                        <i class="fas fa-trash"></i>
+                        清空日志
+                    </button>
+                </div>
+
+                <div class="panel p-6">
+                    <div class="log-container p-4" id="log-content">
+                        <div class="text-gray-500">暂无日志</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 系统设置 -->
+            <section id="settings" class="hidden space-y-6">
+                <div>
+                    <h2 class="text-3xl font-extrabold">⚙️ 系统设置</h2>
+                    <p class="text-muted mt-1">系统信息、调度控制与全局状态</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="panel p-6 space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-xl font-bold">系统信息</h3>
+                                <p class="text-muted text-sm">实时读取运行与队列概况</p>
+                            </div>
+                            <span class="tag">
+                                <i class="fas fa-circle-nodes" style="color: var(--accent);"></i>
+                                实时
+                            </span>
+                        </div>
+                        <div class="space-y-3">
+                            <div class="flex justify-between py-3 border-b" style="border-color: var(--border);">
+                                <span class="text-muted">运行状态</span>
+                                <span id="system-running" class="font-semibold text-emerald-500">运行中</span>
+                            </div>
+                            <div class="flex justify-between py-3 border-b" style="border-color: var(--border);">
+                                <span class="text-muted">任务总数</span>
+                                <span id="system-tasks" class="font-semibold">0</span>
+                            </div>
+                            <div class="flex justify-between py-3 border-b" style="border-color: var(--border);">
+                                <span class="text-muted">队列大小</span>
+                                <span id="system-queue" class="font-semibold">0</span>
+                            </div>
+                            <div class="flex justify-between py-2">
+                                <span class="text-muted">配置路径</span>
+                                <span id="system-config" class="font-semibold text-sm break-all">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel p-6 space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-xl font-bold">调度器控制</h3>
+                                <p class="text-muted text-sm">快速启停调度任务</p>
+                            </div>
+                            <i class="fas fa-sliders text-xl" style="color: var(--accent);"></i>
+                        </div>
+                        <div class="space-y-4">
+                            <button onclick="startScheduler()" class="btn-primary w-full flex items-center justify-center gap-2">
+                                <i class="fas fa-play"></i>
+                                启动调度器
+                            </button>
+                            <button onclick="stopScheduler()" class="btn-ghost w-full flex items-center justify-center gap-2 text-red-500" style="border-color: rgba(248,113,113,0.35);">
+                                <i class="fas fa-stop"></i>
+                                停止调度器
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 添加/编辑任务模态框 -->
+    <div id="taskModal" class="fixed inset-0 bg-black bg-opacity-40 hidden items-center justify-center z-50">
+        <div class="panel w-full max-w-2xl m-4 fade-in">
+            <div class="p-6 border-b flex justify-between items-center" style="border-color: var(--border);">
+                <div>
+                    <p class="text-xs text-muted uppercase tracking-[0.2em]">Task</p>
+                    <h3 id="modalTitle" class="text-2xl font-bold">添加任务</h3>
+                </div>
+                <button onclick="closeTaskModal()" class="icon-button">
+                    <i class="fas fa-times text-lg"></i>
+                </button>
+            </div>
+            <form id="taskForm" class="p-6 space-y-4">
+                <input type="hidden" id="taskId">
+                <div>
+                    <label class="block text-muted mb-2 text-sm font-semibold">任务名称 *</label>
+                    <input type="text" id="taskName" required
+                           class="w-full px-4 py-3 rounded-xl border" style="background: var(--card); border-color: var(--border);">
+                </div>
+                <div>
+                    <label class="block text-muted mb-2 text-sm font-semibold">源目录 *</label>
+                    <input type="text" id="taskSource" required
+                           class="w-full px-4 py-3 rounded-xl border" style="background: var(--card); border-color: var(--border);"
+                           placeholder="/nas/downloads/movies">
+                </div>
+                <div>
+                    <label class="block text-muted mb-2 text-sm font-semibold">目标目录 *</label>
+                    <input type="text" id="taskTarget" required
+                           class="w-full px-4 py-3 rounded-xl border" style="background: var(--card); border-color: var(--border);"
+                           placeholder="/nas/media/movies">
+                </div>
+                <div>
+                    <label class="block text-muted mb-2 text-sm font-semibold">同步间隔（秒）*</label>
+                    <input type="number" id="taskInterval" required min="5" value="300"
+                           class="w-full px-4 py-3 rounded-xl border" style="background: var(--card); border-color: var(--border);">
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <label class="flex items-center gap-2 cursor-pointer text-sm font-semibold">
+                        <input type="checkbox" id="taskRecursive" checked class="w-5 h-5">
+                        <span>递归同步</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer text-sm font-semibold">
+                        <input type="checkbox" id="taskMd5" class="w-5 h-5">
+                        <span>MD5校验</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer text-sm font-semibold">
+                        <input type="checkbox" id="taskEnabled" checked class="w-5 h-5">
+                        <span>启用任务</span>
+                    </label>
+                </div>
+                <div class="flex justify-end gap-3 pt-4">
+                    <button type="button" onclick="closeTaskModal()" class="btn-ghost">
+                        取消
+                    </button>
+                    <button type="submit" class="btn-primary">
+                        保存
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

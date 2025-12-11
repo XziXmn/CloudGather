@@ -35,6 +35,7 @@ class TaskScheduler:
         self.consumer_thread: Optional[threading.Thread] = None
         self.is_running = False
         self.log_callback: Optional[Callable[[str], None]] = None
+        self.task_context_callback: Optional[Callable[[Optional[str]], None]] = None  # 任务上下文回调
         
         # 确保配置目录存在
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +51,15 @@ class TaskScheduler:
             callback: 日志回调函数
         """
         self.log_callback = callback
+    
+    def set_task_context_callback(self, callback: Callable[[Optional[str]], None]):
+        """
+        设置任务上下文回调函数
+        
+        Args:
+            callback: 任务上下文回调函数，参数为当前任务ID或None
+        """
+        self.task_context_callback = callback
     
     def _log(self, message: str):
         """
@@ -254,6 +264,10 @@ class TaskScheduler:
                 
                 task = self.tasks[task_id]
                 
+                # 设置当前任务上下文
+                if self.task_context_callback:
+                    self.task_context_callback(task_id)
+                
                 # 更新状态为 RUNNING
                 task.update_status(TaskStatus.RUNNING)
                 self._log(f"▶ 开始执行任务: {task.name}")
@@ -287,6 +301,10 @@ class TaskScheduler:
                     self._log(f"✗ 任务执行失败: {task.name} - {str(e)}")
                 
                 finally:
+                    # 清除任务上下文
+                    if self.task_context_callback:
+                        self.task_context_callback(None)
+                    
                     # 标记任务完成
                     self.task_queue.task_done()
                     

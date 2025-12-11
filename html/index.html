@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudGather - 云集媒体同步</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root {
+            --bg: #f7f9ff;
+            --panel: #ffffff;
+            --panel-stroke: #e5e9f2;
+            --text: #1f2937;
+            --subtext: #6b7280;
+            --primary: #5b8bff;
+            --primary-strong: #3f70e8;
+            --accent: #f2c8da;
+            --muted: #edf0f7;
+            --shadow: 0 10px 30px rgba(91, 139, 255, 0.18);
+            --blur: 12px;
+        }
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --panel: #1a2335;
+            --panel-stroke: #243148;
+            --text: #e5e7eb;
+            --subtext: #cbd5e1;
+            --primary: #7da8ff;
+            --primary-strong: #5e8cff;
+            --accent: #f0bcd5;
+            --muted: #111827;
+            --shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+            --blur: 16px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        .app-shell { display: flex; min-height: 100vh; }
+
+        .sidebar {
+            width: 240px;
+            background: var(--panel);
+            border-right: 1px solid var(--panel-stroke);
+            box-shadow: var(--shadow);
+            padding: 16px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            z-index: 30;
+            transition: width 0.2s ease;
+        }
+        .sidebar.collapsed { width: 76px; }
+        .sidebar.collapsed:hover { width: 240px; }
+        .logo { display: flex; align-items: center; gap: 10px; padding: 10px; }
+        .logo-text { font-weight: 800; font-size: 16px; }
+        .hide-when-collapsed { transition: opacity 0.15s ease; }
+        .sidebar.collapsed .hide-when-collapsed { opacity: 0; pointer-events: none; }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            border-radius: 12px;
+            background: var(--panel);
+            border: 1px solid var(--panel-stroke);
+            cursor: pointer;
+            color: var(--subtext);
+            font-weight: 700;
+            transition: all 0.2s ease;
+        }
+        .nav-item.active { color: var(--primary-strong); border-color: var(--primary-strong); background: #eef2ff; }
+        [data-theme="dark"] .nav-item.active { background: #202c42; }
+        .nav-item:hover { border-color: var(--primary); color: var(--text); }
+        .collapse-btn { margin-top: auto; }
+
+        .sidebar-mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 25; }
+
+        header.topbar {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: var(--panel);
+            border-bottom: 1px solid var(--panel-stroke);
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .main-content { flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+        .content-body { padding: 20px; }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--panel-stroke);
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: var(--shadow);
+        }
+        .stat-card { background: var(--panel); border: 1px solid var(--panel-stroke); border-radius: 16px; padding: 18px; box-shadow: var(--shadow); transition: transform 0.2s ease; }
+        .stat-card:hover { transform: translateY(-2px); }
+
+        .pill { padding: 6px 12px; border-radius: 999px; background: #e9efff; color: var(--primary-strong); font-weight: 700; border: 1px solid var(--panel-stroke); }
+        [data-theme="dark"] .pill { background: #202c42; }
+
+        .btn {
+            padding: 10px 16px;
+            border-radius: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            border: 1px solid transparent;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+        }
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-primary:hover { background: var(--primary-strong); }
+        .btn-secondary { background: var(--panel); color: var(--text); border: 1px solid var(--panel-stroke); }
+        .btn-secondary:hover { border-color: var(--primary); }
+
+        .task-card { background: var(--panel); border: 1px solid var(--panel-stroke); border-radius: 14px; padding: 14px; margin-bottom: 10px; }
+        .status-badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; }
+        .status-idle { background: #eef2f7; color: #6b7280; }
+        .status-running { background: #e3f7ec; color: #16a34a; }
+        .status-queued { background: #fff4dd; color: #d97706; }
+        .status-error { background: #fde2e2; color: #dc2626; }
+
+        .progress-bar { height: 10px; background: var(--muted); border-radius: 999px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--primary); transition: width 0.3s ease; }
+
+        .view { display: none; }
+        .view.active { display: block; }
+
+        .log-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.45); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 950; padding: 24px; }
+        .log-modal.show { display: flex; }
+        .log-card { width: min(900px, 94vw); background: rgba(15,18,30,0.88); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; box-shadow: 0 18px 60px rgba(0,0,0,0.35); color: #f8fafc; backdrop-filter: blur(var(--blur)); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .log-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .log-content { background: rgba(0,0,0,0.45); border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); padding: 12px; font-family: 'Fira Code','Courier New', monospace; font-size: 13px; height: 360px; overflow-y: auto; color: #e5e7eb; }
+
+        .overlay-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; z-index: 900; padding: 20px; backdrop-filter: blur(6px); }
+        .overlay-modal.show { display: flex; }
+        .modal-card { width: 100%; max-width: 720px; border-radius: 18px; }
+
+        @media (max-width: 1024px) {
+            .sidebar { position: fixed; height: 100vh; left: 0; top: 0; transform: translateX(-100%); transition: transform 0.2s ease, width 0.2s ease; }
+            .sidebar.show { transform: translateX(0); }
+            .sidebar-mask { display: block; }
+            .main-content { margin-left: 0; }
+            header.topbar { position: sticky; top: 0; }
+        }
+    </style>
+</head>
+<body data-theme="light">
+    <div class="sidebar-mask" id="sidebar-mask" onclick="toggleSidebar()"></div>
+    <div class="app-shell">
+        <aside id="sidebar" class="sidebar">
+            <div class="logo">
+                <div class="h-10 w-10 rounded-xl bg-blue-500 text-white flex items-center justify-center"><i class="fas fa-cloud"></i></div>
+                <div class="logo-text hide-when-collapsed">CloudGather</div>
+            </div>
+            <div class="nav-item active" data-view="dashboard" onclick="switchView('dashboard', this)"><i class="fas fa-gauge"></i><span class="hide-when-collapsed">仪表盘</span></div>
+            <div class="nav-item" data-view="tasks" onclick="switchView('tasks', this)"><i class="fas fa-clipboard-list"></i><span class="hide-when-collapsed">任务列表</span></div>
+            <div class="nav-item" data-view="settings" onclick="switchView('settings', this)"><i class="fas fa-sliders-h"></i><span class="hide-when-collapsed">设置</span></div>
+            <button class="nav-item collapse-btn" onclick="toggleSidebar()"><i class="fas fa-bars"></i><span class="hide-when-collapsed">收起/展开</span></button>
+        </aside>
+
+        <div class="main-content">
+            <header class="topbar">
+                <div class="flex items-center gap-3">
+                    <button class="btn btn-secondary md:hidden" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+                    <h1 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-cloud text-blue-500"></i>CloudGather</h1>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button id="themeToggle" class="btn btn-secondary" onclick="toggleTheme()"><i class="fas fa-sun"></i><span class="hidden sm:inline">浅色</span></button>
+                    <button onclick="openLogWindow('general','全局日志')" class="btn btn-secondary"><i class="fas fa-terminal"></i><span class="hidden sm:inline">日志终端</span></button>
+                </div>
+            </header>
+
+            <div class="content-body">
+                <section id="view-dashboard" class="view active space-y-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="pill"><i class="fas fa-gauge-high mr-2"></i>仪表盘</span>
+                            <span class="text-sm text-gray-500">运行概览</span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="stat-card" onclick="switchView('tasks')">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="h-11 w-11 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center"><i class="fas fa-layer-group"></i></div>
+                                <div class="text-right">
+                                    <p class="text-sm text-gray-500">总任务数</p>
+                                    <p id="stat-total" class="text-3xl font-bold">0</p>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500">点击跳转任务列表</p>
+                        </div>
+                        <div class="stat-card" onclick="openRunningModal()">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="h-11 w-11 rounded-lg bg-green-100 text-green-600 flex items-center justify-center"><i class="fas fa-play"></i></div>
+                                <div class="text-right">
+                                    <p class="text-sm text-gray-500">运行中</p>
+                                    <p id="stat-running" class="text-3xl font-bold text-green-600">0</p>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500">查看正在运行</p>
+                        </div>
+                        <div class="stat-card" onclick="openQueueModal()">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="h-11 w-11 rounded-lg bg-yellow-100 text-yellow-700 flex items-center justify-center"><i class="fas fa-clock"></i></div>
+                                <div class="text-right">
+                                    <p class="text-sm text-gray-500">队列中</p>
+                                    <p id="stat-queued" class="text-3xl font-bold text-yellow-700">0</p>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500">查看等待队列</p>
+                        </div>
+                        <div class="stat-card">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="h-11 w-11 rounded-lg bg-pink-100 text-pink-500 flex items-center justify-center"><i class="fas fa-server"></i></div>
+                                <div class="text-right">
+                                    <p class="text-sm text-gray-500">调度器</p>
+                                    <p id="stat-scheduler" class="text-lg font-bold text-green-600">运行中</p>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500">默认常驻运行，查看日志终端</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="card">
+                            <div class="flex items-center gap-2 mb-3"><i class="fas fa-microchip text-blue-500"></i><h3 class="font-bold">CPU 使用率</h3></div>
+                            <div class="flex items-center justify-between mb-2"><span class="text-sm text-gray-500">当前</span><span id="cpu-percent" class="text-2xl font-bold">0%</span></div>
+                            <div class="progress-bar"><div id="cpu-progress" class="progress-fill" style="width: 0%"></div></div>
+                        </div>
+                        <div class="card">
+                            <div class="flex items-center gap-2 mb-3"><i class="fas fa-memory text-pink-500"></i><h3 class="font-bold">内存使用</h3></div>
+                            <div class="flex items-center justify-between mb-2"><span class="text-sm text-gray-500">已用 / 总计</span><span id="memory-text" class="text-lg font-bold">0 MB / 0 MB</span></div>
+                            <div class="progress-bar"><div id="memory-progress" class="progress-fill" style="width: 0%"></div></div>
+                            <p class="text-sm text-gray-500 mt-2">使用率: <span id="memory-percent" class="font-semibold">0%</span></p>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="view-tasks" class="view space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h2 class="text-xl font-bold">任务列表</h2>
+                        <button onclick="showAddTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加任务</button>
+                    </div>
+                    <div id="tasks-container" class="space-y-2 card">
+                        <div class="text-center py-12 text-gray-400"><i class="fas fa-inbox text-5xl mb-4"></i><p>暂无任务</p></div>
+                    </div>
+                </section>
+
+                <section id="view-settings" class="view space-y-4">
+                    <h2 class="text-xl font-bold">系统设置</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="card">
+                            <p class="text-sm text-gray-500">运行环境</p>
+                            <p class="mt-1 font-semibold" id="is-docker">-</p>
+                            <p class="text-xs text-gray-500 mt-1">配置路径：<span id="config-path" class="font-mono">-</span></p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <div id="runningModal" class="overlay-modal">
+        <div class="modal-card card">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-xl font-bold">运行中任务</h3>
+                    <span class="pill" id="running-count">0 条</span>
+                </div>
+                <button class="btn btn-secondary text-sm" onclick="closeOverlay('runningModal')"><i class="fas fa-times"></i>关闭</button>
+            </div>
+            <div id="running-container" class="space-y-3"><div class="text-gray-500 text-center py-6">暂无运行中的任务</div></div>
+        </div>
+    </div>
+
+    <div id="queueModal" class="overlay-modal">
+        <div class="modal-card card">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-xl font-bold">等待队列</h3>
+                    <span class="pill" id="queue-modal-count">0 条</span>
+                </div>
+                <button class="btn btn-secondary text-sm" onclick="closeOverlay('queueModal')"><i class="fas fa-times"></i>关闭</button>
+            </div>
+            <div id="queue-modal-container" class="space-y-3"><div class="text-gray-500 text-center py-6">队列为空</div></div>
+        </div>
+    </div>
+
+    <div id="taskModal" class="overlay-modal">
+        <div class="modal-card card max-w-3xl w-full">
+            <div class="flex items-center justify-between mb-6">
+                <h3 id="modalTitle" class="text-2xl font-bold">添加任务</h3>
+                <button class="btn btn-secondary" onclick="closeTaskModal()"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="taskForm" class="space-y-4">
+                <input type="hidden" id="taskId">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-sm text-gray-600 mb-2">任务名称 *</label>
+                        <input type="text" id="taskName" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="例如：电影同步">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-2">源目录 *</label>
+                        <input type="text" id="taskSource" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/source/movies">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-2">目标目录 *</label>
+                        <input type="text" id="taskTarget" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/target/movies">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm text-gray-600 mb-2">同步间隔（秒）*</label>
+                        <input type="number" id="taskInterval" required min="5" value="300" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                    </div>
+                    <div class="md:col-span-2 flex flex-wrap gap-6 text-sm">
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskRecursive" checked class="w-5 h-5"><span>递归同步</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskMd5" class="w-5 h-5"><span>MD5校验</span></label>
+                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskEnabled" checked class="w-5 h-5"><span>启用任务</span></label>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 pt-4">
+                    <button type="button" onclick="closeTaskModal()" class="btn btn-secondary">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="log-root"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

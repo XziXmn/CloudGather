@@ -3,3 +3,6 @@ flask>=3.0.0
 
 # 任务调度
 apscheduler>=3.10.0
+
+# 系统资源监控
+psutil>=5.9.0
