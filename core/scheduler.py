@@ -35,6 +35,7 @@ class TaskScheduler:
         self.consumer_thread: Optional[threading.Thread] = None
         self.is_running = False
         self.log_callback: Optional[Callable[[str], None]] = None
+        self.progress_callback: Optional[Callable[[str, int, int, str], None]] = None
         
         # 确保配置目录存在
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,11 +51,20 @@ class TaskScheduler:
             callback: 日志回调函数
         """
         self.log_callback = callback
+
+    def set_progress_callback(self, callback: Callable[[str, int, int, str], None]):
+        """
+        设置进度回调函数
+
+        Args:
+            callback: 进度回调函数
+        """
+        self.progress_callback = callback
     
     def _log(self, message: str):
         """
         输出日志
-        
+
         Args:
             message: 日志消息
         """
@@ -264,11 +274,19 @@ class TaskScheduler:
                         source_dir=task.source_path,
                         target_dir=task.target_path
                     )
-                    
+
+                    def report_progress(done: int, total: int, filename: str):
+                        if self.progress_callback:
+                            self.progress_callback(task.id, done, total, filename)
+
+                    def task_log(message: str):
+                        self._log(f"{task.id}|{message}")
+
                     stats = syncer.sync_directory(
                         recursive=task.recursive,
                         verify_md5=task.verify_md5,
-                        log_callback=self._log
+                        log_callback=task_log,
+                        progress_callback=report_progress
                     )
                     
                     # 更新状态为 IDLE
