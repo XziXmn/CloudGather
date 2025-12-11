@@ -256,8 +256,7 @@ class FileSyncer:
         self,
         recursive: bool = True,
         verify_md5: bool = False,
-        log_callback: Optional[Callable[[str], None]] = None,
-        progress_callback: Optional[Callable[[int, int, str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None
     ) -> dict:
         """
         同步整个目录
@@ -281,15 +280,13 @@ class FileSyncer:
         if log_callback:
             log_callback(f"开始同步目录: {self.source_dir} -> {self.target_dir}")
         
-        # 遍历源目录并预先统计文件数量
+        # 遍历源目录
         pattern = "**/*" if recursive else "*"
-        source_files = [f for f in self.source_dir.glob(pattern) if f.is_file()]
-        stats["total"] = len(source_files)
-
-        if progress_callback:
-            progress_callback(0, stats["total"], "")
-
-        for index, source_file in enumerate(source_files, start=1):
+        for source_file in self.source_dir.glob(pattern):
+            if not source_file.is_file():
+                continue
+            
+            stats["total"] += 1
             
             # 计算相对路径
             relative_path = source_file.relative_to(self.source_dir)
@@ -297,9 +294,6 @@ class FileSyncer:
             
             # 同步文件
             result = self.sync_file(source_file, target_file, verify_md5, log_callback)
-
-            if progress_callback:
-                progress_callback(index, stats["total"], source_file.name)
             
             # 更新统计
             if result == "Success":
