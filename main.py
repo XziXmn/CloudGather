@@ -27,6 +27,9 @@ task_logs: Dict[str, List[str]] = defaultdict(list)
 # 任务进度存储 (task_id -> progress info)
 task_progress: Dict[str, dict] = {}
 
+# 日志对话框状态
+current_log_task_id: str | None = None
+
 
 def log_handler(message: str):
     """
@@ -69,8 +72,24 @@ def log_handler(message: str):
             pass
 
 
+def progress_handler(task_id: str, current: int, total: int, filename: str):
+    """任务进度回调"""
+    percentage = int((current / total * 100) if total else 0)
+    task_progress[task_id] = {
+        'current': current,
+        'total': total,
+        'percentage': percentage,
+        'filename': filename,
+    }
+
+
+
 # 设置调度器日志回调
 scheduler.set_log_callback(log_handler)
+scheduler.set_progress_callback(progress_handler)
+
+# 全局主题色
+ui.colors(primary='#6366f1', secondary='#0ea5e9', positive='#10b981', warning='#f59e0b')
 
 
 def get_status_badge(status: TaskStatus) -> dict:
@@ -211,33 +230,57 @@ async def show_edit_task_dialog(task: SyncTask):
     dialog.open()
 
 
+log_dialog = ui.dialog().props('persistent no-esc-dismiss no-backdrop-dismiss')
+with log_dialog, ui.card().classes('w-full max-w-4xl bg-slate-900 text-slate-100 shadow-2xl border border-slate-800'):
+    with ui.row().classes('w-full justify-between items-center mb-3'):
+        log_title = ui.label('📋 任务日志').classes('text-2xl font-bold')
+        ui.button(icon='close', on_click=lambda: close_log_dialog()).props('flat round dense color=white')
+
+    log_container = ui.column().classes('w-full')
+    with ui.scroll_area().classes('w-full h-[520px] rounded border border-slate-700 bg-slate-950/70 p-4 shadow-inner'):
+        with log_container:
+            ui.label('暂无日志').classes('text-slate-500')
+
+    with ui.row().classes('w-full justify-between items-center mt-3 text-sm text-slate-300'):
+        log_hint = ui.label('日志实时刷新中...')
+        ui.button('清空日志', on_click=lambda: (task_logs.clear(), refresh_log_content(current_log_task_id)), icon='delete_sweep').props('outline color=warning')
+
+
+def refresh_log_content(task_id: str | None):
+    if not task_id:
+        return
+
+    log_container.clear()
+    logs = task_logs.get(task_id, task_logs.get('general', []))
+
+    with log_container:
+        if logs:
+            for log in logs[-200:]:
+                ui.label(log).classes('font-mono text-sm text-emerald-300')
+        else:
+            ui.label('暂无日志').classes('text-slate-500')
+
+    ui.run_javascript('const area = document.querySelector(".q-scrollarea__container"); if(area){area.scrollTop = area.scrollHeight;}')
+
+
+def close_log_dialog():
+    global current_log_task_id
+    current_log_task_id = None
+    log_timer.active = False
+    log_dialog.close()
+
+
 def show_task_logs(task_id: str, task_name: str):
-    """显示任务日志对话框"""
-    with ui.dialog().props('persistent') as dialog, ui.card().classes('w-full max-w-4xl'):
-        with ui.row().classes('w-full justify-between items-center mb-4'):
-            ui.label(f'📋 任务日志: {task_name}').classes('text-2xl font-bold')
-            ui.button(icon='close', on_click=dialog.close).props('flat round dense')
-        
-        # 日志内容区域
-        log_container = ui.column().classes('w-full')
-        
-        with ui.scroll_area().classes('w-full h-[500px] border rounded p-4 bg-gray-900'):
-            with log_container:
-                logs = task_logs.get(task_id, task_logs.get('general', []))
-                if logs:
-                    for log in logs[-100:]:  # 显示最近100条
-                        ui.label(log).classes('font-mono text-sm text-green-400')
-                else:
-                    ui.label('暂无日志').classes('text-gray-500')
-        
-        # 自动滚动到底部
-        ui.run_javascript('document.querySelector(".q-scrollarea__container").scrollTop = document.querySelector(".q-scrollarea__container").scrollHeight')
-        
-        with ui.row().classes('w-full justify-between mt-4'):
-            ui.button('清空日志', on_click=lambda: (task_logs.clear(), ui.notify('日志已清空', type='positive')), icon='delete_sweep').props('outline')
-            ui.button('关闭', on_click=dialog.close, icon='check').props('color=primary')
-    
-    dialog.open()
+    """显示任务日志对话框（常驻刷新）"""
+    global current_log_task_id
+    current_log_task_id = task_id
+    log_title.set_text(f'📋 任务日志: {task_name}')
+    refresh_log_content(task_id)
+    log_timer.active = True
+    log_dialog.open()
+
+
+log_timer = ui.timer(1.0, lambda: refresh_log_content(current_log_task_id), active=False)
 
 
 async def confirm_delete_task(task: SyncTask):
@@ -275,9 +318,9 @@ def render_task_card(task: SyncTask):
     status_badge = get_status_badge(task.status)
     
     # 美化卡片样式
-    card_style = 'shadow-lg hover:shadow-xl transition-shadow duration-300 border-l-4'
-    border_color = 'border-green-500' if task.status == TaskStatus.RUNNING else 'border-gray-300'
-    
+    card_style = 'shadow-xl hover:shadow-2xl transition-all duration-300 border border-slate-200/70 backdrop-blur bg-white/90'
+    border_color = 'border-l-4 border-emerald-500' if task.status == TaskStatus.RUNNING else 'border-l-4 border-slate-200'
+
     with ui.card().classes(f'w-full mb-4 {card_style} {border_color}'):
         # 卡片头部
         with ui.row().classes('w-full justify-between items-center mb-3'):
@@ -296,13 +339,19 @@ def render_task_card(task: SyncTask):
         if task.status == TaskStatus.RUNNING:
             progress_info = task_progress.get(task.id, {})
             progress_value = progress_info.get('percentage', 0)
-            
-            with ui.column().classes('w-full mb-3'):
+            current_file = progress_info.get('filename', '')
+            total_files = progress_info.get('total', 0)
+            current_index = progress_info.get('current', 0)
+
+            with ui.column().classes('w-full mb-3 bg-slate-100/60 p-3 rounded-lg'):
                 with ui.row().classes('w-full justify-between items-center mb-1'):
                     ui.label('同步进度').classes('text-sm font-semibold text-gray-700')
-                    ui.label(f'{progress_value}%').classes('text-sm font-mono text-blue-600')
-                
-                ui.linear_progress(progress_value / 100).props('color=primary instant-feedback')
+                    ui.label(f'{progress_value}%').classes('text-sm font-mono text-emerald-700')
+
+                ui.linear_progress(progress_value / 100).props('color=positive instant-feedback rounded')
+
+                if current_file:
+                    ui.label(f'正在处理: {current_file} ({current_index}/{total_files})').classes('text-xs text-slate-600 mt-1 font-mono')
         
         # 卡片内容
         with ui.column().classes('w-full gap-2 mb-3 bg-gray-50 p-3 rounded'):
@@ -357,77 +406,83 @@ def render_task_card(task: SyncTask):
 @ui.page('/')
 def main_page():
     """主页面 - 任务列表"""
-    
-    # 页面容器
-    with ui.row().classes('w-full h-screen bg-gradient-to-br from-blue-50 to-indigo-50'):
+
+    with ui.row().classes('w-full h-screen bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 text-slate-50'):
         # 左侧侧边栏
-        with ui.column().classes('w-64 h-full bg-gradient-to-b from-blue-600 to-indigo-700 p-4 gap-2 shadow-2xl'):
-            # Logo 和标题
-            with ui.row().classes('items-center gap-2 mb-6'):
-                ui.icon('movie', size='lg').classes('text-white')
+        with ui.column().classes('w-72 h-full bg-slate-900/80 border-r border-slate-800 p-5 gap-3 shadow-2xl backdrop-blur-xl'):
+            with ui.row().classes('items-center gap-3 mb-6'):
+                ui.icon('movie', size='lg').classes('text-emerald-400')
                 ui.label('FnOS Media Mover').classes('text-xl font-bold text-white')
-            
-            # 导航菜单
+
+            # 导航
             with ui.column().classes('w-full gap-2'):
-                ui.button('📋 任务', on_click=lambda: ui.navigate.to('/')).props('flat align=left').classes('w-full justify-start text-white hover:bg-white/20')
-                ui.button('🧪 实验室', on_click=lambda: ui.navigate.to('/lab')).props('flat align=left').classes('w-full justify-start text-white hover:bg-white/20')
-                ui.button('⚙️ 设置', on_click=lambda: ui.navigate.to('/settings')).props('flat align=left').classes('w-full justify-start text-white hover:bg-white/20')
-            
-            ui.separator().classes('bg-white/30')
-            
-            # 调度器状态卡片
-            with ui.card().classes('w-full mt-4 bg-white/10 backdrop-blur'):
-                ui.label('调度器状态').classes('font-bold text-white mb-2')
-                
-                scheduler_status = ui.label().classes('text-white')
-                queue_size = ui.label().classes('text-white text-sm')
-                
+                ui.button('📋 任务面板', on_click=lambda: ui.navigate.to('/')).props('flat align=left color=white').classes('w-full justify-start hover:bg-emerald-500/20')
+                ui.button('🧪 实验室', on_click=lambda: ui.navigate.to('/lab')).props('flat align=left color=white').classes('w-full justify-start hover:bg-emerald-500/20')
+                ui.button('⚙️ 设置', on_click=lambda: ui.navigate.to('/settings')).props('flat align=left color=white').classes('w-full justify-start hover:bg-emerald-500/20')
+
+            ui.separator().classes('bg-slate-700 my-2')
+
+            with ui.card().classes('w-full bg-slate-800/80 border border-slate-700 shadow-lg'):
+                ui.label('调度器').classes('font-bold text-slate-100 mb-2')
+                scheduler_status = ui.label().classes('text-sm text-emerald-400')
+                queue_size = ui.label().classes('text-xs text-slate-300')
+
                 def update_scheduler_status():
-                    if scheduler.is_running:
-                        scheduler_status.set_text('🟢 运行中')
-                    else:
-                        scheduler_status.set_text('🔴 已停止')
-                    
+                    scheduler_status.set_text('🟢 正在运行' if scheduler.is_running else '🔴 已停止')
                     queue_size.set_text(f'队列: {scheduler.get_queue_size()} 个任务')
-                
+
                 ui.timer(1.0, update_scheduler_status)
-            
-            # 底部版本信息
+
             ui.space()
-            with ui.column().classes('w-full'):
-                ui.separator().classes('bg-white/30 mb-2')
-                ui.label('v1.0.0').classes('text-xs text-white/60 text-center')
-        
+            ui.label('v1.0.0').classes('text-xs text-slate-500 text-center')
+
         # 右侧主内容区
-        with ui.column().classes('flex-1 h-full p-8 overflow-auto'):
-            # 页面头部
-            with ui.row().classes('w-full justify-between items-center mb-6'):
+        with ui.column().classes('flex-1 h-full p-8 overflow-auto gap-6 bg-gradient-to-br from-slate-900/50 to-slate-800/40 backdrop-blur-xl'):
+            # 顶部标题与操作
+            with ui.row().classes('w-full justify-between items-center'):
                 with ui.column().classes('gap-1'):
-                    ui.label('📋 同步任务').classes('text-4xl font-bold text-gray-800')
-                    ui.label('管理你的文件同步任务').classes('text-sm text-gray-600')
-                
-                ui.button('添加任务', on_click=show_add_task_dialog, icon='add').props('color=primary size=lg')
-            
-            # 任务列表容器
-            task_list_container = ui.column().classes('w-full')
-            
+                    ui.label('📋 同步任务').classes('text-4xl font-bold text-white')
+                    ui.label('让多端文件同步更智能、更可视').classes('text-sm text-slate-400')
+
+                ui.button('添加任务', on_click=show_add_task_dialog, icon='add').props('color=primary size=lg unelevated').classes('shadow-lg')
+
+            # 概览卡片
+            with ui.row().classes('w-full gap-4 flex-wrap'):
+                overview_card = lambda title, icon, color: ui.card().classes('flex-1 min-w-[200px] bg-white/5 border border-slate-800 shadow-xl backdrop-blur p-4 flex items-center gap-3')
+                with overview_card('总任务', 'list', 'emerald'):
+                    total_label = ui.label('0').classes('text-3xl font-bold text-white')
+                    ui.label('总任务').classes('text-sm text-slate-400')
+                    ui.icon('list').classes('text-emerald-400 ml-auto')
+                with overview_card('运行中', 'play_arrow', 'amber'):
+                    running_label = ui.label('0').classes('text-3xl font-bold text-white')
+                    ui.label('运行中').classes('text-sm text-slate-400')
+                    ui.icon('play_arrow').classes('text-amber-300 ml-auto')
+                with overview_card('队列长度', 'schedule', 'blue'):
+                    queue_label = ui.label('0').classes('text-3xl font-bold text-white')
+                    ui.label('队列长度').classes('text-sm text-slate-400')
+                    ui.icon('schedule').classes('text-sky-300 ml-auto')
+
+            # 任务列表
+            task_list_container = ui.column().classes('w-full gap-4')
+
             def refresh_task_list():
-                """刷新任务列表"""
+                tasks = scheduler.get_all_tasks()
+
+                total_label.set_text(str(len(tasks)))
+                running_label.set_text(str(len([t for t in tasks if t.status == TaskStatus.RUNNING])))
+                queue_label.set_text(str(scheduler.get_queue_size()))
+
                 task_list_container.clear()
-                
                 with task_list_container:
-                    tasks = scheduler.get_all_tasks()
-                    
                     if not tasks:
-                        with ui.card().classes('w-full text-center p-12 bg-white shadow-lg'):
-                            ui.icon('inbox', size='xl').classes('text-gray-300 mb-4')
-                            ui.label('暂无任务').classes('text-2xl text-gray-500 font-bold mb-2')
-                            ui.label('点击右上角"添加任务"按钮创建第一个同步任务').classes('text-sm text-gray-400')
+                        with ui.card().classes('w-full text-center p-12 bg-white/5 border border-slate-800 shadow-xl backdrop-blur'):
+                            ui.icon('inbox', size='xl').classes('text-slate-500 mb-4')
+                            ui.label('暂无任务').classes('text-2xl text-white font-bold mb-2')
+                            ui.label('点击右上角“添加任务”开启第一次同步').classes('text-sm text-slate-400')
                     else:
                         for task in tasks:
                             render_task_card(task)
-            
-            # 每秒刷新任务列表
+
             ui.timer(1.0, refresh_task_list)
 
 
