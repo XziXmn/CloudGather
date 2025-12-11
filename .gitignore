@@ -42,10 +42,9 @@ config/*.json
 *.log
 logs/
 
-# NiceGUI
-.nicegui/
-
 # Test
 .pytest_cache/
 .coverage
 htmlcov/
+AGENTS.md
+start.bat

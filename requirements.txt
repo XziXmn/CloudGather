@@ -1,3 +1,5 @@
-nicegui>=1.4.0
+# Flask 后端
+flask>=3.0.0
+
+# 任务调度
 apscheduler>=3.10.0
-pathlib2>=2.3.7; python_version < '3.4'
