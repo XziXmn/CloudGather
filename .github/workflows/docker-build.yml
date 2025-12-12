@@ -40,7 +40,7 @@ jobs:
         id: meta
         run: |
           # 提取版本号
-          VERSION="0.2"
+          VERSION="0.3"
           
           # 确定标签
           if [[ $GITHUB_REF == refs/tags/* ]]; then

@@ -307,7 +307,7 @@
     </div>
 
     <div id="taskModal" class="overlay-modal">
-        <div class="modal-card card max-w-3xl w-full">
+        <div class="modal-card card max-w-3xl w-full" onclick="event.stopPropagation()">
             <div class="flex items-center justify-between mb-6">
                 <h3 id="modalTitle" class="text-2xl font-bold">添加任务</h3>
                 <button class="btn btn-secondary" onclick="closeTaskModal()"><i class="fas fa-times"></i></button>
@@ -320,12 +320,12 @@
                         <input type="text" id="taskName" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="例如：电影同步">
                     </div>
                     <div>
-                        <label class="block text-sm text-gray-600 mb-2">源目录 *</label>
-                        <input type="text" id="taskSource" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/source/movies">
+                        <label class="block text-sm text-gray-600 mb-2">源目录 * <span class="text-xs text-gray-400">(输入后自动提示)</span></label>
+                        <input type="text" id="taskSource" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/source/movies" autocomplete="off">
                     </div>
                     <div>
-                        <label class="block text-sm text-gray-600 mb-2">目标目录 *</label>
-                        <input type="text" id="taskTarget" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/target/movies">
+                        <label class="block text-sm text-gray-600 mb-2">目标目录 * <span class="text-xs text-gray-400">(输入后自动提示)</span></label>
+                        <input type="text" id="taskTarget" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/target/movies" autocomplete="off">
                     </div>
                     <div class="md:col-span-2">
                         <label class="block text-sm text-gray-600 mb-2">同步间隔（秒）*</label>

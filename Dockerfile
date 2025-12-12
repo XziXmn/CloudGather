@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 # 设置版本号
-ARG VERSION=0.2
+ARG VERSION=0.3
 ENV APP_VERSION=${VERSION}
 
 # 设置工作目录

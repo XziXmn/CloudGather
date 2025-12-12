@@ -6,6 +6,8 @@ let queueCache = [];
 let currentView = 'dashboard';
 const logWindows = new Map(); // logId -> element
 const logCache = {}; // 本地缓存各日志内容
+let taskFormDirty = false; // 表单是否已修改
+let directoryCache = {}; // 目录缓存
 
 function applyTheme(theme) {
     document.body.setAttribute('data-theme', theme);
@@ -310,18 +312,78 @@ function showNotification(message, type = 'info') {
 }
 
 function showAddTaskModal() {
+    // 检查是否有草稿
+    const draft = localStorage.getItem('task-draft');
+    if (draft && !currentEditingTaskId) {
+        if (confirm('检测到未保存的草稿，是否加载？')) {
+            loadDraft();
+            document.getElementById('taskModal').classList.add('show');
+            return;
+        } else {
+            localStorage.removeItem('task-draft');
+        }
+    }
+    
     currentEditingTaskId = null;
+    taskFormDirty = false;
     document.getElementById('modalTitle').textContent = '添加任务';
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
     document.getElementById('taskRecursive').checked = true;
     document.getElementById('taskEnabled').checked = true;
     document.getElementById('taskModal').classList.add('show');
+    
+    // 初始化目录自动提示
+    initDirectoryAutocomplete();
+}
+
+function loadDraft() {
+    try {
+        const draft = JSON.parse(localStorage.getItem('task-draft'));
+        if (draft) {
+            document.getElementById('taskName').value = draft.name || '';
+            document.getElementById('taskSource').value = draft.source_path || '';
+            document.getElementById('taskTarget').value = draft.target_path || '';
+            document.getElementById('taskInterval').value = draft.interval || 300;
+            document.getElementById('taskRecursive').checked = draft.recursive !== false;
+            document.getElementById('taskMd5').checked = draft.verify_md5 || false;
+            document.getElementById('taskEnabled').checked = draft.enabled !== false;
+        }
+    } catch (e) {
+        console.error('加载草稿失败:', e);
+    }
+}
+
+function saveDraft() {
+    if (!taskFormDirty) return;
+    const draft = {
+        name: document.getElementById('taskName').value,
+        source_path: document.getElementById('taskSource').value,
+        target_path: document.getElementById('taskTarget').value,
+        interval: parseInt(document.getElementById('taskInterval').value) || 300,
+        recursive: document.getElementById('taskRecursive').checked,
+        verify_md5: document.getElementById('taskMd5').checked,
+        enabled: document.getElementById('taskEnabled').checked
+    };
+    localStorage.setItem('task-draft', JSON.stringify(draft));
 }
 
 function closeTaskModal() {
+    // 如果表单已修改且未保存，提示用户
+    if (taskFormDirty && !currentEditingTaskId) {
+        if (confirm('有未保存的内容，是否保存为草稿？')) {
+            saveDraft();
+        } else {
+            localStorage.removeItem('task-draft');
+        }
+    }
+    
     document.getElementById('taskModal').classList.remove('show');
     currentEditingTaskId = null;
+    taskFormDirty = false;
+    
+    // 移除目录提示
+    removeDirectoryAutocomplete();
 }
 
 async function editTask(taskId) {
@@ -368,6 +430,9 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         const result = await response.json();
         if (result.success) {
             showNotification(currentEditingTaskId ? '任务已更新' : '任务已添加', 'success');
+            // 清除草稿
+            localStorage.removeItem('task-draft');
+            taskFormDirty = false;
             closeTaskModal();
             loadTasks();
         } else {
@@ -378,6 +443,179 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         showNotification('保存任务失败', 'error');
     }
 });
+
+// 监听表单变化
+function initFormChangeListener() {
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'taskInterval', 'taskRecursive', 'taskMd5', 'taskEnabled'];
+    inputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('input', () => { taskFormDirty = true; });
+            el.addEventListener('change', () => { taskFormDirty = true; });
+        }
+    });
+}
+
+// 目录自动提示功能
+let currentDropdown = null;
+let currentInputField = null;
+
+function initDirectoryAutocomplete() {
+    const sourceInput = document.getElementById('taskSource');
+    const targetInput = document.getElementById('taskTarget');
+    
+    if (sourceInput) setupDirectoryInput(sourceInput);
+    if (targetInput) setupDirectoryInput(targetInput);
+}
+
+function setupDirectoryInput(input) {
+    input.addEventListener('focus', () => {
+        currentInputField = input;
+        showDirectoryDropdown(input);
+    });
+    
+    input.addEventListener('input', debounce(() => {
+        showDirectoryDropdown(input);
+    }, 300));
+    
+    input.addEventListener('blur', () => {
+        // 延迟移除，以便点击下拉框
+        setTimeout(() => {
+            if (currentInputField === input) {
+                removeDirectoryDropdown();
+                currentInputField = null;
+            }
+        }, 200);
+    });
+}
+
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+async function showDirectoryDropdown(input) {
+    const path = input.value.trim() || '/';
+    
+    try {
+        const response = await fetch(`/api/directories?path=${encodeURIComponent(path)}`);
+        const data = await response.json();
+        
+        if (!data.success && data.error) {
+            // 如果有错误，不显示下拉框
+            removeDirectoryDropdown();
+            return;
+        }
+        
+        const directories = data.directories || [];
+        if (directories.length === 0 && !data.parent_path) {
+            removeDirectoryDropdown();
+            return;
+        }
+        
+        renderDirectoryDropdown(input, directories, data.current_path, data.parent_path);
+    } catch (error) {
+        console.error('获取目录失败:', error);
+        removeDirectoryDropdown();
+    }
+}
+
+function renderDirectoryDropdown(input, directories, currentPath, parentPath) {
+    removeDirectoryDropdown();
+    
+    const dropdown = document.createElement('div');
+    dropdown.className = 'directory-dropdown';
+    dropdown.style.cssText = `
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        max-height: 300px;
+        overflow-y: auto;
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        z-index: 1000;
+        margin-top: 4px;
+    `;
+    
+    // 添加当前路径显示
+    if (currentPath) {
+        const pathInfo = document.createElement('div');
+        pathInfo.className = 'px-3 py-2 text-xs text-gray-500 border-b border-gray-200 font-mono';
+        pathInfo.textContent = `当前: ${currentPath}`;
+        dropdown.appendChild(pathInfo);
+    }
+    
+    // 添加返回上一级
+    if (parentPath && parentPath !== currentPath) {
+        const parentItem = createDirectoryItem('📁 ..',  parentPath, input);
+        parentItem.style.fontWeight = 'bold';
+        dropdown.appendChild(parentItem);
+    }
+    
+    // 添加子目录
+    directories.forEach(dir => {
+        const item = createDirectoryItem('📂 ' + dir.name, dir.path, input);
+        dropdown.appendChild(item);
+    });
+    
+    if (directories.length === 0 && (!parentPath || parentPath === currentPath)) {
+        const emptyItem = document.createElement('div');
+        emptyItem.className = 'px-3 py-2 text-sm text-gray-400 text-center';
+        emptyItem.textContent = '此目录下无子目录';
+        dropdown.appendChild(emptyItem);
+    }
+    
+    // 将下拉框附加到 input 的父元素
+    const parent = input.parentElement;
+    parent.style.position = 'relative';
+    parent.appendChild(dropdown);
+    
+    currentDropdown = dropdown;
+}
+
+function createDirectoryItem(text, path, input) {
+    const item = document.createElement('div');
+    item.className = 'px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 transition-colors';
+    item.textContent = text;
+    item.style.cursor = 'pointer';
+    
+    item.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // 防止 input blur
+    });
+    
+    item.addEventListener('click', () => {
+        input.value = path;
+        taskFormDirty = true;
+        removeDirectoryDropdown();
+        input.focus();
+        // 重新加载目录
+        setTimeout(() => showDirectoryDropdown(input), 100);
+    });
+    
+    return item;
+}
+
+function removeDirectoryDropdown() {
+    if (currentDropdown) {
+        currentDropdown.remove();
+        currentDropdown = null;
+    }
+}
+
+function removeDirectoryAutocomplete() {
+    removeDirectoryDropdown();
+    currentInputField = null;
+}
 
 async function deleteTask(taskId, taskName) {
     if (!confirm(`确定要删除任务"${taskName}"吗？`)) return;
@@ -454,6 +692,10 @@ function closeOverlay(id) {
         loadSystemStatus();
         loadTasks();
         loadQueue(false);
+        
+        // 初始化表单监听
+        initFormChangeListener();
+        
         setInterval(() => {
             loadSystemStatus();
             loadTasks();
@@ -462,7 +704,29 @@ function closeOverlay(id) {
             }
             if (currentView === 'queue') loadQueue();
         }, 3000);
-        ['taskModal', 'runningModal', 'queueModal'].forEach(id => {
+        
+        // 修改模态框点击外部关闭逻辑
+        const taskModal = document.getElementById('taskModal');
+        if (taskModal) {
+            taskModal.addEventListener('click', (e) => {
+                // 只有点击背景层时才关闭，点击卡片内部不关闭
+                if (e.target.id === 'taskModal') {
+                    if (taskFormDirty && !currentEditingTaskId) {
+                        if (confirm('有未保存的内容，是否保存为草稿？')) {
+                            saveDraft();
+                        } else {
+                            localStorage.removeItem('task-draft');
+                        }
+                    }
+                    taskModal.classList.remove('show');
+                    taskFormDirty = false;
+                    removeDirectoryAutocomplete();
+                }
+            });
+        }
+        
+        // 其他模态框保持原有逻辑
+        ['runningModal', 'queueModal'].forEach(id => {
             const modal = document.getElementById(id);
             if (modal) modal.addEventListener('click', (e) => { if (e.target.id === id) modal.classList.remove('show'); });
         });

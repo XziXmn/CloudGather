@@ -8,6 +8,7 @@ import atexit
 import os
 import psutil
 import threading
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -17,7 +18,14 @@ from core.scheduler import TaskScheduler
 from core.models import SyncTask
 
 # 版本信息
-VERSION = "0.2"
+VERSION = "0.3"
+
+# 配置日志格式
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 # 环境适配：判断是否在 Docker 环境中
 IS_DOCKER = os.getenv('IS_DOCKER', 'false').lower() == 'true'
@@ -72,6 +80,23 @@ ensure_scheduler_running()
 
 # Flask 应用
 app = Flask(__name__, static_folder='static', template_folder='html')
+
+# 配置 Flask 访问日志格式
+import logging
+from logging import Formatter
+
+class TimestampedFormatter(Formatter):
+    def format(self, record):
+        # 为访问日志添加时间戳
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return f'[{timestamp}] {record.getMessage()}'
+
+# 设置 werkzeug 日志格式
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(TimestampedFormatter())
+log.handlers = [handler]
 
 
 @app.route('/')
@@ -245,6 +270,65 @@ def api_clear_logs():
     return jsonify({'success': True})
 
 
+@app.route('/api/directories', methods=['GET'])
+def api_list_directories():
+    """列出指定路径下的目录"""
+    path = request.args.get('path', '/')
+    try:
+        from pathlib import Path
+        import os
+        
+        # 安全检查：确保路径存在
+        target_path = Path(path)
+        if not target_path.exists():
+            # 如果路径不存在，返回父目录
+            parent = target_path.parent
+            if parent.exists() and parent.is_dir():
+                target_path = parent
+            else:
+                # 返回根目录或用户主目录
+                target_path = Path('/') if IS_DOCKER else Path.home()
+        
+        # 只列出目录
+        dirs = []
+        if target_path.is_dir():
+            try:
+                for item in sorted(target_path.iterdir()):
+                    if item.is_dir():
+                        try:
+                            # 检查是否可读
+                            item.stat()
+                            dirs.append({
+                                'name': item.name,
+                                'path': str(item),
+                                'parent': str(item.parent)
+                            })
+                        except (PermissionError, OSError):
+                            # 跳过无权限的目录
+                            continue
+            except PermissionError:
+                return jsonify({
+                    'success': False,
+                    'error': '没有权限访问此目录',
+                    'current_path': str(target_path),
+                    'directories': []
+                })
+        
+        return jsonify({
+            'success': True,
+            'current_path': str(target_path),
+            'parent_path': str(target_path.parent) if target_path.parent != target_path else None,
+            'directories': dirs
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'current_path': path,
+            'directories': []
+        })
+
+
 @atexit.register
 def _cleanup():
     if scheduler.is_running:
@@ -252,6 +336,13 @@ def _cleanup():
 
 
 if __name__ == '__main__':
+    # 启动信息
+    print(f'\n✅ CloudGather v{VERSION} 启动成功')
+    print(f'⏰ 时区: {os.getenv("TZ", "UTC")}')
+    print(f'🌐 访问地址: http://127.0.0.1:8080')
+    print('▶️  服务运行中... (按 CTRL+C 停止)\n')
+    
+    # 启动 Flask
     app.run(
         host='0.0.0.0' if IS_DOCKER else '127.0.0.1',
         port=8080,
