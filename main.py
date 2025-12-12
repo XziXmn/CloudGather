@@ -1,6 +1,7 @@
 """
 CloudGather（云集）- 媒体文件同步工具
 使用 Flask + HTML 前端
+Version: 0.2
 """
 
 import atexit
@@ -14,6 +15,9 @@ from flask import Flask, jsonify, render_template, request
 
 from core.scheduler import TaskScheduler
 from core.models import SyncTask
+
+# 版本信息
+VERSION = "0.2"
 
 # 环境适配：判断是否在 Docker 环境中
 IS_DOCKER = os.getenv('IS_DOCKER', 'false').lower() == 'true'
@@ -31,7 +35,7 @@ _current_task_id: Optional[str] = None  # 当前正在执行的任务ID
 
 def log_handler(message: str):
     """统一日志处理器，存入内存供前端拉取"""
-    timestamp = datetime.now().strftime('%H:%M:%S')
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     entry = f"[{timestamp}] {message}"
     with log_lock:
         # 添加到全局日志
@@ -100,6 +104,7 @@ def api_status():
         'task_count': len(scheduler.tasks),
         'config_path': str(CONFIG_PATH),
         'is_docker': IS_DOCKER,
+        'version': VERSION,
         # 系统资源
         'system': {
             'cpu_percent': cpu_percent,

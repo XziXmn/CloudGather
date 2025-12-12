@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  cloudgather:
+    image: moyuemoyun/cloudgather:beta
+    container_name: cloudgather
+    restart: unless-stopped
+    
+    ports:
+      - "8080:8080"
+    
+    volumes:
+      # 配置文件持久化
+      - ./config:/app/config
+      # 挂载源目录和目标目录（根据实际情况修改）
+      - /path/to/source:/source
+      - /path/to/target:/target
+    
+    environment:
+      # Docker 模式（必须）
+      - IS_DOCKER=true
+      
+      # 时区设置（可选，默认 Asia/Shanghai）
+      - TZ=Asia/Shanghai
+      
+      # 用户权限设置（可选，默认 1000:1000）
+      # PUID 和 PGID 应与宿主机用户匹配，避免权限问题
+      - PUID=1000
+      - PGID=1000
+      
+      # 静默期检测延迟（可选，默认 5 秒）
+      - STABILITY_DELAY=5
+    
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/status')"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

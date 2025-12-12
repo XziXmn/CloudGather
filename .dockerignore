@@ -1,0 +1,47 @@
+# Git 相关
+.git
+.gitignore
+.gitattributes
+
+# Python 相关
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+
+# 配置文件（运行时生成）
+config/tasks.json
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+
+# IDE 相关
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 文档
+*.md
+!README.md
+
+# GitHub Actions
+.github/
+
+# Docker 相关
+Dockerfile
+.dockerignore
