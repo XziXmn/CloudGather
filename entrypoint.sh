@@ -8,10 +8,8 @@ echo "  媒体文件同步工具"
 echo "=========================================="
 echo ""
 
-# 设置时区
-echo "⏰ 设置时区: ${TZ}"
-ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
-echo $TZ > /etc/timezone
+# 显示时区信息（通过环境变量 TZ 设置）
+echo "⏰ 时区: ${TZ:-UTC}"
 echo "   当前时间: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo ""
 
@@ -19,30 +17,13 @@ echo ""
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 
-echo "👤 用户权限设置:"
-echo "   PUID: ${PUID}"
-echo "   PGID: ${PGID}"
-
-# 创建用户组（如果不存在）
-if ! getent group cloudgather > /dev/null 2>&1; then
-    groupadd -g ${PGID} cloudgather
-    echo "   ✓ 创建用户组: cloudgather (GID: ${PGID})"
-fi
-
-# 创建用户（如果不存在）
-if ! id cloudgather > /dev/null 2>&1; then
-    useradd -u ${PUID} -g ${PGID} -M -s /bin/bash cloudgather
-    echo "   ✓ 创建用户: cloudgather (UID: ${PUID})"
-fi
-
-# 设置目录权限
+echo "👤 用户权限信息:"
+echo "   运行用户: $(id -u):$(id -g)"
+echo "   配置 PUID: ${PUID}"
+echo "   配置 PGID: ${PGID}"
 echo ""
-echo "📁 设置目录权限..."
-chown -R ${PUID}:${PGID} /app/config 2>/dev/null || true
-echo "   ✓ /app/config 权限已设置"
 
 # 显示配置信息
-echo ""
 echo "⚙️  配置信息:"
 echo "   配置路径: /app/config"
 echo "   监听端口: 8080"
@@ -53,5 +34,5 @@ echo "  启动应用..."
 echo "=========================================="
 echo ""
 
-# 切换到指定用户运行应用
-exec gosu ${PUID}:${PGID} "$@"
+# 直接运行应用
+exec "$@"
