@@ -1,4 +1,4 @@
-// CloudGather v2.4 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏
+// CloudGather v0.3.1 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度
 let currentEditingTaskId = null;
 let lastTasksData = null;
 let tasksCache = [];
@@ -185,7 +185,16 @@ function renderTasks(tasks) {
         container.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-inbox text-5xl mb-4"></i><p>暂无任务</p></div>';
         return;
     }
-    container.innerHTML = tasks.map(task => `
+    container.innerHTML = tasks.map(task => {
+        // 根据调度类型显示不同信息
+        let scheduleInfo = '';
+        if (task.schedule_type === 'CRON') {
+            scheduleInfo = `<div class="flex items-center"><i class="fas fa-calendar-alt text-purple-500 mr-2"></i><span>Cron: <code class="px-2 py-1 bg-gray-100 rounded text-xs font-mono">${task.cron_expression}</code></span></div>`;
+        } else {
+            scheduleInfo = `<div class="flex items-center"><i class="fas fa-clock text-yellow-500 mr-2"></i><span>间隔：${formatInterval(task.interval)}</span></div>`;
+        }
+        
+        return `
         <div class="task-card" data-task-id="${task.id}">
             <div class="flex items-start justify-between mb-3">
                 <div class="flex-1">
@@ -193,13 +202,14 @@ function renderTasks(tasks) {
                         <h4 class="text-lg font-bold">${task.name}</h4>
                         <span class="status-badge-container">${getStatusBadge(task.status)}</span>
                         ${task.enabled ? '<span class="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">已启用</span>' : '<span class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded">已禁用</span>'}
+                        ${task.schedule_type === 'CRON' ? '<span class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded"><i class="fas fa-calendar-alt mr-1"></i>Cron</span>' : '<span class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded"><i class="fas fa-clock mr-1"></i>间隔</span>'}
                     </div>
                 </div>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
                 <div class="flex items-center"><i class="fas fa-folder-open text-blue-500 mr-2"></i><span class="font-mono">${task.source_path}</span></div>
                 <div class="flex items-center"><i class="fas fa-folder text-green-500 mr-2"></i><span class="font-mono">${task.target_path}</span></div>
-                <div class="flex items-center"><i class="fas fa-clock text-yellow-500 mr-2"></i><span>间隔：${formatInterval(task.interval)}</span></div>
+                ${scheduleInfo}
                 <div class="flex items-center gap-2">
                     ${task.recursive ? '<span class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded"><i class="fas fa-code-branch mr-1"></i>递归</span>' : ''}
                     ${task.verify_md5 ? '<span class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded"><i class="fas fa-shield-alt mr-1"></i>MD5</span>' : ''}
@@ -208,12 +218,13 @@ function renderTasks(tasks) {
             </div>
             <div class="flex gap-2 flex-wrap mt-3">
                 <button onclick="triggerTask('${task.id}')" class="btn btn-primary text-sm" ${task.status !== 'IDLE' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''}><i class="fas fa-play"></i>立即运行</button>
-                <button onclick="openLogWindow('${task.id}', '${task.name.replace(/'/g, "\''")} 日志')" class="btn btn-secondary text-sm"><i class="fas fa-terminal"></i>查看日志</button>
+                <button onclick="openLogWindow('${task.id}', '${task.name.replace(/'/g, "''")} 日志')" class="btn btn-secondary text-sm"><i class="fas fa-terminal"></i>查看日志</button>
                 <button onclick="editTask('${task.id}')" class="btn btn-secondary text-sm"><i class="fas fa-edit"></i>编辑</button>
-                <button onclick="deleteTask('${task.id}', '${task.name.replace(/'/g, "\''")}')" class="btn btn-secondary text-sm border-red-500 text-red-500"><i class="fas fa-trash"></i>删除</button>
+                <button onclick="deleteTask('${task.id}', '${task.name.replace(/'/g, "''")}')" class="btn btn-secondary text-sm border-red-500 text-red-500"><i class="fas fa-trash"></i>删除</button>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 async function loadQueue(updateTab = true) {
@@ -331,6 +342,13 @@ function showAddTaskModal() {
     document.getElementById('taskId').value = '';
     document.getElementById('taskRecursive').checked = true;
     document.getElementById('taskEnabled').checked = true;
+    
+    // 初始化调度模式为间隔调度
+    document.querySelector('input[name="scheduleType"][value="INTERVAL"]').checked = true;
+    document.getElementById('intervalSeconds').value = 300;
+    updateIntervalDisplay();
+    toggleScheduleMode();
+    
     document.getElementById('taskModal').classList.add('show');
     
     // 初始化目录自动提示
@@ -398,11 +416,26 @@ async function editTask(taskId) {
         document.getElementById('taskName').value = task.name;
         document.getElementById('taskSource').value = task.source_path;
         document.getElementById('taskTarget').value = task.target_path;
-        document.getElementById('taskInterval').value = task.interval;
         document.getElementById('taskRecursive').checked = task.recursive;
         document.getElementById('taskMd5').checked = task.verify_md5;
         document.getElementById('taskEnabled').checked = task.enabled;
+        
+        // 设置调度模式
+        const scheduleType = task.schedule_type || 'INTERVAL';
+        if (scheduleType === 'CRON') {
+            document.querySelector('input[name="scheduleType"][value="CRON"]').checked = true;
+            document.getElementById('cronExpression').value = task.cron_expression || '';
+            validateCron();
+        } else {
+            document.querySelector('input[name="scheduleType"][value="INTERVAL"]').checked = true;
+            const interval = task.interval || 300;
+            document.getElementById('intervalSeconds').value = interval;
+            updateIntervalDisplay();
+        }
+        toggleScheduleMode();
+        
         document.getElementById('taskModal').classList.add('show');
+        initDirectoryAutocomplete();
     } catch (error) {
         console.error('加载任务失败:', error);
         showNotification('加载任务失败', 'error');
@@ -411,15 +444,35 @@ async function editTask(taskId) {
 
 document.getElementById('taskForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    
+    // 获取调度类型
+    const scheduleType = document.querySelector('input[name="scheduleType"]:checked').value;
+    
     const taskData = {
         name: document.getElementById('taskName').value,
         source_path: document.getElementById('taskSource').value,
         target_path: document.getElementById('taskTarget').value,
-        interval: parseInt(document.getElementById('taskInterval').value),
+        schedule_type: scheduleType,
         recursive: document.getElementById('taskRecursive').checked,
         verify_md5: document.getElementById('taskMd5').checked,
         enabled: document.getElementById('taskEnabled').checked
     };
+    
+    // 根据调度类型添加相应字段
+    if (scheduleType === 'CRON') {
+        taskData.cron_expression = document.getElementById('cronExpression').value.trim();
+        if (!taskData.cron_expression) {
+            showNotification('Cron 表达式不能为空', 'error');
+            return;
+        }
+    } else {
+        taskData.interval = parseInt(document.getElementById('intervalSeconds').value);
+        if (taskData.interval < 5) {
+            showNotification('同步间隔需大于等于 5 秒', 'error');
+            return;
+        }
+    }
+    
     try {
         let response;
         if (currentEditingTaskId) {
@@ -446,13 +499,19 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'taskInterval', 'taskRecursive', 'taskMd5', 'taskEnabled'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'intervalSeconds', 'intervalMinutes', 'intervalHours', 'cronExpression', 'taskRecursive', 'taskMd5', 'taskEnabled'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener('input', () => { taskFormDirty = true; });
             el.addEventListener('change', () => { taskFormDirty = true; });
         }
+    });
+    
+    // 监听调度模式切换
+    const scheduleRadios = document.querySelectorAll('input[name="scheduleType"]');
+    scheduleRadios.forEach(radio => {
+        radio.addEventListener('change', () => { taskFormDirty = true; });
     });
 }
 
@@ -683,6 +742,162 @@ async function openQueueModal() {
 function closeOverlay(id) {
     const el = document.getElementById(id);
     if (el) el.classList.remove('show');
+}
+
+// ========== Cron 相关功能 ==========
+
+// 调度模式切换
+function toggleScheduleMode() {
+    const scheduleType = document.querySelector('input[name="scheduleType"]:checked').value;
+    const intervalConfig = document.getElementById('intervalConfig');
+    const cronConfig = document.getElementById('cronConfig');
+    const intervalLabel = document.getElementById('scheduleTypeInterval');
+    const cronLabel = document.getElementById('scheduleTypeCron');
+    
+    if (scheduleType === 'CRON') {
+        intervalConfig.style.display = 'none';
+        cronConfig.style.display = 'block';
+        intervalLabel.className = 'flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-blue-300 transition-all';
+        cronLabel.className = 'flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-blue-500 bg-blue-50 transition-all';
+    } else {
+        intervalConfig.style.display = 'block';
+        cronConfig.style.display = 'none';
+        intervalLabel.className = 'flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-blue-500 bg-blue-50 transition-all';
+        cronLabel.className = 'flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-blue-300 transition-all';
+    }
+    taskFormDirty = true;
+}
+
+// 间隔时间更新
+function updateIntervalDisplay() {
+    const seconds = parseInt(document.getElementById('intervalSeconds').value) || 0;
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(seconds / 3600);
+    
+    document.getElementById('intervalMinutes').value = minutes;
+    document.getElementById('intervalHours').value = hours;
+    
+    let display = '';
+    if (hours > 0) {
+        const remainMin = minutes % 60;
+        display = hours + ' 小时' + (remainMin > 0 ? ' ' + remainMin + ' 分钟' : '');
+    } else if (minutes > 0) {
+        display = minutes + ' 分钟';
+    } else {
+        display = seconds + ' 秒';
+    }
+    
+    document.getElementById('intervalTotal').textContent = display;
+}
+
+function updateIntervalFromMinutes() {
+    const minutes = parseInt(document.getElementById('intervalMinutes').value) || 0;
+    const seconds = minutes * 60;
+    if (seconds >= 5) {
+        document.getElementById('intervalSeconds').value = seconds;
+        updateIntervalDisplay();
+    }
+}
+
+function updateIntervalFromHours() {
+    const hours = parseInt(document.getElementById('intervalHours').value) || 0;
+    const seconds = hours * 3600;
+    if (seconds >= 5) {
+        document.getElementById('intervalSeconds').value = seconds;
+        updateIntervalDisplay();
+    }
+}
+
+// Cron 验证
+let cronValidationTimeout = null;
+async function validateCron() {
+    clearTimeout(cronValidationTimeout);
+    const expression = document.getElementById('cronExpression').value.trim();
+    const validationDiv = document.getElementById('cronValidation');
+    
+    if (!expression) {
+        validationDiv.innerHTML = '';
+        return;
+    }
+    
+    cronValidationTimeout = setTimeout(async () => {
+        try {
+            const response = await fetch('/api/cron/validate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ expression })
+            });
+            const data = await response.json();
+            
+            if (data.valid) {
+                validationDiv.innerHTML = `<span class="text-green-600">✓ ${data.description}</span>`;
+            } else {
+                validationDiv.innerHTML = `<span class="text-red-600">✗ ${data.error}</span>`;
+            }
+        } catch (error) {
+            validationDiv.innerHTML = `<span class="text-red-600">✗ 验证失败</span>`;
+        }
+    }, 500);
+}
+
+// 显示 Cron 预设
+let cronPresetsCache = null;
+async function showCronPresets() {
+    const presetList = document.getElementById('cronPresetList');
+    const container = presetList.querySelector('div');
+    
+    if (presetList.style.display === 'block') {
+        presetList.style.display = 'none';
+        return;
+    }
+    
+    if (!cronPresetsCache) {
+        try {
+            const response = await fetch('/api/cron/presets');
+            const data = await response.json();
+            cronPresetsCache = data.presets || [];
+        } catch (error) {
+            showNotification('加载预设失败', 'error');
+            return;
+        }
+    }
+    
+    container.innerHTML = cronPresetsCache.map(preset => `
+        <div class="px-3 py-2 bg-white hover:bg-blue-50 rounded cursor-pointer text-sm transition-colors" onclick="selectCronPreset('${preset.expression}')">
+            <div class="flex items-center justify-between">
+                <span class="font-semibold">${preset.name}</span>
+                <code class="text-xs bg-gray-100 px-2 py-1 rounded">${preset.expression}</code>
+            </div>
+            <div class="text-xs text-gray-500 mt-1">${preset.description}</div>
+        </div>
+    `).join('');
+    
+    presetList.style.display = 'block';
+}
+
+function selectCronPreset(expression) {
+    document.getElementById('cronExpression').value = expression;
+    document.getElementById('cronPresetList').style.display = 'none';
+    validateCron();
+    taskFormDirty = true;
+}
+
+// 随机生成 Cron
+async function generateRandomCron() {
+    const patterns = ['hourly', 'daily', 'night'];
+    const randomPattern = patterns[Math.floor(Math.random() * patterns.length)];
+    
+    try {
+        const response = await fetch(`/api/cron/random?pattern=${randomPattern}`);
+        const data = await response.json();
+        
+        document.getElementById('cronExpression').value = data.expression;
+        validateCron();
+        showNotification(`随机生成: ${data.description}`, 'success');
+        taskFormDirty = true;
+    } catch (error) {
+        showNotification('生成失败', 'error');
+    }
 }
 
 (function init() {

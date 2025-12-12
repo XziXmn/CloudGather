@@ -18,7 +18,7 @@ from core.scheduler import TaskScheduler
 from core.models import SyncTask
 
 # 版本信息
-VERSION = "0.3"
+VERSION = "0.3.1"
 
 # 配置日志格式
 logging.basicConfig(
@@ -97,6 +97,7 @@ log.setLevel(logging.INFO)
 handler = logging.StreamHandler()
 handler.setFormatter(TimestampedFormatter())
 log.handlers = [handler]
+log.propagate = False  # 关闭向 root logger 凒泡，避免重复输出
 
 
 @app.route('/')
@@ -148,28 +149,56 @@ def api_tasks():
         return jsonify({'tasks': tasks})
 
     data = request.get_json(silent=True) or {}
-    required_fields = ['name', 'source_path', 'target_path', 'interval']
+    required_fields = ['name', 'source_path', 'target_path']
     missing = [f for f in required_fields if f not in data]
     if missing:
         return jsonify({'success': False, 'error': f"缺少字段: {', '.join(missing)}"}), 400
 
-    try:
-        interval = int(data.get('interval', 0))
-    except ValueError:
-        return jsonify({'success': False, 'error': '同步间隔必须是数字'}), 400
+    # 获取调度类型
+    schedule_type = data.get('schedule_type', 'INTERVAL')
+    
+    if schedule_type == 'CRON':
+        # Cron 调度
+        cron_expression = data.get('cron_expression', '').strip()
+        if not cron_expression:
+            return jsonify({'success': False, 'error': 'Cron 表达式不能为空'}), 400
+        
+        # 验证 cron 表达式格式
+        parts = cron_expression.split()
+        if len(parts) != 5:
+            return jsonify({'success': False, 'error': 'Cron 表达式格式错误，应为 5 个字段：分 时 日 月 星期'}), 400
+        
+        task = SyncTask(
+            name=data['name'],
+            source_path=data['source_path'],
+            target_path=data['target_path'],
+            schedule_type='CRON',
+            cron_expression=cron_expression,
+            interval=300,  # cron 模式下 interval 不使用，但需要默认值
+            recursive=_parse_bool(data.get('recursive', True), True),
+            verify_md5=_parse_bool(data.get('verify_md5', False), False),
+            enabled=_parse_bool(data.get('enabled', True), True)
+        )
+    else:
+        # 间隔调度
+        try:
+            interval = int(data.get('interval', 300))
+        except ValueError:
+            return jsonify({'success': False, 'error': '同步间隔必须是数字'}), 400
 
-    if interval < 5:
-        return jsonify({'success': False, 'error': '同步间隔需大于等于 5 秒'}), 400
+        if interval < 5:
+            return jsonify({'success': False, 'error': '同步间隔需大于等于 5 秒'}), 400
 
-    task = SyncTask(
-        name=data['name'],
-        source_path=data['source_path'],
-        target_path=data['target_path'],
-        interval=interval,
-        recursive=_parse_bool(data.get('recursive', True), True),
-        verify_md5=_parse_bool(data.get('verify_md5', False), False),
-        enabled=_parse_bool(data.get('enabled', True), True)
-    )
+        task = SyncTask(
+            name=data['name'],
+            source_path=data['source_path'],
+            target_path=data['target_path'],
+            schedule_type='INTERVAL',
+            interval=interval,
+            recursive=_parse_bool(data.get('recursive', True), True),
+            verify_md5=_parse_bool(data.get('verify_md5', False), False),
+            enabled=_parse_bool(data.get('enabled', True), True)
+        )
 
     if scheduler.add_task(task):
         return jsonify({'success': True, 'task': _task_to_dict(task)})
@@ -327,6 +356,101 @@ def api_list_directories():
             'current_path': path,
             'directories': []
         })
+
+
+@app.route('/api/cron/presets', methods=['GET'])
+def api_cron_presets():
+    """获取 Cron 表达式预设"""
+    presets = [
+        {'name': '每 5 分钟', 'expression': '*/5 * * * *', 'description': '每 5 分钟执行一次'},
+        {'name': '每 10 分钟', 'expression': '*/10 * * * *', 'description': '每 10 分钟执行一次'},
+        {'name': '每 15 分钟', 'expression': '*/15 * * * *', 'description': '每 15 分钟执行一次'},
+        {'name': '每 30 分钟', 'expression': '*/30 * * * *', 'description': '每 30 分钟执行一次'},
+        {'name': '每小时', 'expression': '0 * * * *', 'description': '每小时整点执行'},
+        {'name': '每 2 小时', 'expression': '0 */2 * * *', 'description': '每 2 小时执行一次'},
+        {'name': '每 6 小时', 'expression': '0 */6 * * *', 'description': '每 6 小时执行一次'},
+        {'name': '每 12 小时', 'expression': '0 */12 * * *', 'description': '每 12 小时执行一次'},
+        {'name': '每天凌晨 2 点', 'expression': '0 2 * * *', 'description': '每天凌晨 2:00 执行'},
+        {'name': '每天凌晨 3 点', 'expression': '0 3 * * *', 'description': '每天凌晨 3:00 执行'},
+        {'name': '每天早上 8 点', 'expression': '0 8 * * *', 'description': '每天早上 8:00 执行'},
+        {'name': '每周一凌晨 2 点', 'expression': '0 2 * * 1', 'description': '每周一凌晨 2:00 执行'},
+        {'name': '每月 1 号凌晨 2 点', 'expression': '0 2 1 * *', 'description': '每月 1 号凌晨 2:00 执行'},
+        {'name': '工作日早上 9 点', 'expression': '0 9 * * 1-5', 'description': '周一到周五早上 9:00 执行'},
+    ]
+    return jsonify({'presets': presets})
+
+
+@app.route('/api/cron/random', methods=['GET'])
+def api_cron_random():
+    """生成随机 Cron 表达式"""
+    import random
+    
+    # 获取参数
+    pattern = request.args.get('pattern', 'hourly')  # daily, hourly, custom
+    
+    if pattern == 'daily':
+        # 每天随机时间
+        minute = random.randint(0, 59)
+        hour = random.randint(0, 23)
+        expression = f"{minute} {hour} * * *"
+        description = f"每天 {hour:02d}:{minute:02d} 执行"
+    elif pattern == 'hourly':
+        # 每小时随机分钟
+        minute = random.randint(0, 59)
+        expression = f"{minute} * * * *"
+        description = f"每小时的第 {minute} 分钟执行"
+    elif pattern == 'night':
+        # 深夜随机时间（23:00-05:00）
+        minute = random.randint(0, 59)
+        hour = random.choice([23, 0, 1, 2, 3, 4, 5])
+        expression = f"{minute} {hour} * * *"
+        description = f"每天凌晨 {hour:02d}:{minute:02d} 执行"
+    else:
+        # 完全随机
+        minute = random.randint(0, 59)
+        hour = random.randint(0, 23)
+        expression = f"{minute} {hour} * * *"
+        description = f"每天 {hour:02d}:{minute:02d} 执行"
+    
+    return jsonify({
+        'expression': expression,
+        'description': description,
+        'pattern': pattern
+    })
+
+
+@app.route('/api/cron/validate', methods=['POST'])
+def api_cron_validate():
+    """验证 Cron 表达式"""
+    data = request.get_json(silent=True) or {}
+    expression = data.get('expression', '').strip()
+    
+    if not expression:
+        return jsonify({'valid': False, 'error': 'Cron 表达式不能为空'})
+    
+    parts = expression.split()
+    if len(parts) != 5:
+        return jsonify({'valid': False, 'error': 'Cron 表达式应包含 5 个字段：分 时 日 月 星期'})
+    
+    try:
+        from apscheduler.triggers.cron import CronTrigger
+        minute, hour, day, month, day_of_week = parts
+        trigger = CronTrigger(
+            minute=minute,
+            hour=hour,
+            day=day,
+            month=month,
+            day_of_week=day_of_week
+        )
+        # 获取下次执行时间
+        next_run = trigger.get_next_fire_time(None, datetime.now())
+        return jsonify({
+            'valid': True,
+            'next_run': next_run.isoformat() if next_run else None,
+            'description': f"下次执行: {next_run.strftime('%Y-%m-%d %H:%M:%S')}" if next_run else '无法计算'
+        })
+    except Exception as e:
+        return jsonify({'valid': False, 'error': f'验证失败: {str(e)}'})
 
 
 @atexit.register

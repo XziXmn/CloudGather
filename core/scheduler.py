@@ -13,8 +13,9 @@ from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
-from core.models import SyncTask, TaskStatus
+from core.models import SyncTask, TaskStatus, ScheduleType
 from core.worker import FileSyncer
 
 
@@ -208,7 +209,36 @@ class TaskScheduler:
         Args:
             task: 同步任务对象
         """
-        trigger = IntervalTrigger(seconds=task.interval)
+        # 根据调度类型选择不同的 trigger
+        if task.schedule_type == ScheduleType.CRON:
+            # Cron 表达式调度
+            if not task.cron_expression:
+                self._log(f"⚠ 任务 {task.name} 的 Cron 表达式为空，跳过调度")
+                return
+            try:
+                # 解析 cron 表达式：分 时 日 月 星期
+                parts = task.cron_expression.strip().split()
+                if len(parts) == 5:
+                    minute, hour, day, month, day_of_week = parts
+                    trigger = CronTrigger(
+                        minute=minute,
+                        hour=hour,
+                        day=day,
+                        month=month,
+                        day_of_week=day_of_week
+                    )
+                    self._log(f"任务已调度 (Cron): {task.name} ({task.cron_expression})")
+                else:
+                    self._log(f"⚠ 任务 {task.name} 的 Cron 表达式格式错误: {task.cron_expression}")
+                    return
+            except Exception as e:
+                self._log(f"⚠ 解析 Cron 表达式失败: {task.name} - {str(e)}")
+                return
+        else:
+            # 间隔调度（默认）
+            trigger = IntervalTrigger(seconds=task.interval)
+            self._log(f"任务已调度 (Interval): {task.name} (间隔: {task.interval}s)")
+        
         self.scheduler.add_job(
             func=self._on_task_triggered,
             trigger=trigger,
@@ -216,7 +246,6 @@ class TaskScheduler:
             args=[task.id],
             replace_existing=True
         )
-        self._log(f"任务已调度: {task.name} (间隔: {task.interval}s)")
     
     def _on_task_triggered(self, task_id: str):
         """

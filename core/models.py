@@ -8,6 +8,12 @@ from typing import Optional, Dict, Any
 from enum import Enum
 
 
+class ScheduleType(Enum):
+    """调度类型枚举"""
+    INTERVAL = "INTERVAL"   # 间隔调度（秒、分、小时）
+    CRON = "CRON"           # Cron 表达式调度
+
+
 class TaskStatus(Enum):
     """任务状态枚举"""
     IDLE = "IDLE"           # 空闲状态
@@ -24,7 +30,9 @@ class SyncTask:
         name: str,
         source_path: str,
         target_path: str,
-        interval: int,
+        interval: int = 300,  # 默认 5 分钟
+        schedule_type: str = "INTERVAL",
+        cron_expression: Optional[str] = None,
         task_id: Optional[str] = None,
         status: str = "IDLE",
         last_run_time: Optional[str] = None,
@@ -39,7 +47,9 @@ class SyncTask:
             name: 任务名称
             source_path: 源目录路径
             target_path: 目标目录路径
-            interval: 同步间隔（秒）
+            interval: 同步间隔（秒），当 schedule_type=INTERVAL 时有效
+            schedule_type: 调度类型（INTERVAL 或 CRON）
+            cron_expression: Cron 表达式，当 schedule_type=CRON 时使用
             task_id: 任务唯一标识符（UUID），不提供则自动生成
             status: 任务状态
             last_run_time: 上次运行时间（ISO格式字符串）
@@ -52,6 +62,8 @@ class SyncTask:
         self.source_path = source_path
         self.target_path = target_path
         self.interval = interval
+        self.schedule_type = ScheduleType[schedule_type] if isinstance(schedule_type, str) else schedule_type
+        self.cron_expression = cron_expression
         self.status = TaskStatus[status] if isinstance(status, str) else status
         self.last_run_time = last_run_time
         self.enabled = enabled
@@ -71,6 +83,8 @@ class SyncTask:
             "source_path": self.source_path,
             "target_path": self.target_path,
             "interval": self.interval,
+            "schedule_type": self.schedule_type.value,
+            "cron_expression": self.cron_expression,
             "status": self.status.value,
             "last_run_time": self.last_run_time,
             "enabled": self.enabled,
@@ -94,7 +108,9 @@ class SyncTask:
             name=data["name"],
             source_path=data["source_path"],
             target_path=data["target_path"],
-            interval=data["interval"],
+            interval=data.get("interval", 300),
+            schedule_type=data.get("schedule_type", "INTERVAL"),
+            cron_expression=data.get("cron_expression"),
             status=data.get("status", "IDLE"),
             last_run_time=data.get("last_run_time"),
             enabled=data.get("enabled", True),

@@ -327,10 +327,57 @@
                         <label class="block text-sm text-gray-600 mb-2">目标目录 * <span class="text-xs text-gray-400">(输入后自动提示)</span></label>
                         <input type="text" id="taskTarget" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/target/movies" autocomplete="off">
                     </div>
+                    
+                    <!-- 调度模式选择 -->
                     <div class="md:col-span-2">
-                        <label class="block text-sm text-gray-600 mb-2">同步间隔（秒）*</label>
-                        <input type="number" id="taskInterval" required min="5" value="300" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                        <label class="block text-sm text-gray-600 mb-3">调度模式 *</label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-blue-500 bg-blue-50 transition-all" id="scheduleTypeInterval">
+                                <input type="radio" name="scheduleType" value="INTERVAL" checked class="w-4 h-4" onchange="toggleScheduleMode()">
+                                <span class="font-semibold">⏱️ 间隔调度</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-blue-300 transition-all" id="scheduleTypeCron">
+                                <input type="radio" name="scheduleType" value="CRON" class="w-4 h-4" onchange="toggleScheduleMode()">
+                                <span class="font-semibold">📅 Cron 调度</span>
+                            </label>
+                        </div>
                     </div>
+                    
+                    <!-- 间隔调度配置 -->
+                    <div id="intervalConfig" class="md:col-span-2">
+                        <label class="block text-sm text-gray-600 mb-2">同步间隔 *</label>
+                        <div class="grid grid-cols-3 gap-3">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">秒</label>
+                                <input type="number" id="intervalSeconds" min="5" value="300" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white text-sm" onchange="updateIntervalDisplay()">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">分钟</label>
+                                <input type="number" id="intervalMinutes" min="0" value="5" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white text-sm" onchange="updateIntervalFromMinutes()">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">小时</label>
+                                <input type="number" id="intervalHours" min="0" value="0" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white text-sm" onchange="updateIntervalFromHours()">
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">ℹ️ 总间隔: <span id="intervalTotal" class="font-semibold text-blue-600">5 分钟</span></p>
+                    </div>
+                    
+                    <!-- Cron 调度配置 -->
+                    <div id="cronConfig" class="md:col-span-2" style="display: none;">
+                        <label class="block text-sm text-gray-600 mb-2">
+Cron 表达式 * <span class="text-xs text-gray-400">(格式: 分 时 日 月 星期)</span></label>
+                        <div class="flex gap-2 mb-2">
+                            <input type="text" id="cronExpression" class="flex-1 px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white font-mono" placeholder="0 2 * * *" oninput="validateCron()">
+                            <button type="button" onclick="showCronPresets()" class="btn btn-secondary whitespace-nowrap"><i class="fas fa-list"></i> 预设</button>
+                            <button type="button" onclick="generateRandomCron()" class="btn btn-secondary"><i class="fas fa-dice"></i></button>
+                        </div>
+                        <div id="cronValidation" class="text-xs mt-1"></div>
+                        <div id="cronPresetList" class="mt-2" style="display: none;">
+                            <div class="max-h-48 overflow-y-auto bg-gray-50 rounded-lg p-2 space-y-1"></div>
+                        </div>
+                    </div>
+                    
                     <div class="md:col-span-2 flex flex-wrap gap-6 text-sm">
                         <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskRecursive" checked class="w-5 h-5"><span>递归同步</span></label>
                         <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskMd5" class="w-5 h-5"><span>MD5校验</span></label>
