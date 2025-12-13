@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 # 设置版本号
-ARG VERSION=0.3.1
+ARG VERSION=0.3.5
 ENV APP_VERSION=${VERSION}
 
 # 设置工作目录
@@ -34,7 +34,7 @@ RUN mkdir -p /app/config
 ENV IS_DOCKER=true \
     TZ=Asia/Shanghai \
     PUID=1000 \
-    PGID=1000 \
+    PGID=1001 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONIOENCODING=utf-8

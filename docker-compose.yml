@@ -17,15 +17,15 @@ services:
       # - '/mnt/source:/source'
       # - '/mnt/target:/target'
     
-    user: '1000:1001'  # UID:GID 格式，根据宿主机用户修改
-    
     ports:
       - '3602:8080'
     
     environment:
       - TZ=Asia/Shanghai  # 时区设置
       - IS_DOCKER=true    # Docker 模式标识
-      - UMASK=022         # 文件创建掩码
+      - PUID=1000         # 运行用户 ID（根据实际情况修改）
+      - PGID=1001         # 运行用户组 ID（根据实际情况修改）
+      - UMASK=022         # 文件创建掩码（根据实际情况修改）
     
     restart: always
     network_mode: bridge

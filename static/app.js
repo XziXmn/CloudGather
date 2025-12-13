@@ -1,4 +1,4 @@
-// CloudGather v0.3.1 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度
+// CloudGather v0.3.5 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度
 let currentEditingTaskId = null;
 let lastTasksData = null;
 let tasksCache = [];
@@ -118,6 +118,7 @@ async function loadSystemStatus() {
         }
         document.getElementById('config-path').textContent = data.config_path;
         document.getElementById('is-docker').textContent = data.is_docker ? 'Docker' : '本地';
+        document.getElementById('app-version').textContent = 'v' + (data.version || '0.3.5');  // 显示版本号
     } catch (error) {
         console.error('加载系统状态失败:', error);
     }
@@ -343,12 +344,6 @@ function showAddTaskModal() {
     document.getElementById('taskRecursive').checked = true;
     document.getElementById('taskEnabled').checked = true;
     
-    // 初始化调度模式为间隔调度
-    document.querySelector('input[name="scheduleType"][value="INTERVAL"]').checked = true;
-    document.getElementById('intervalSeconds').value = 300;
-    updateIntervalDisplay();
-    toggleScheduleMode();
-    
     document.getElementById('taskModal').classList.add('show');
     
     // 初始化目录自动提示
@@ -387,13 +382,9 @@ function saveDraft() {
 }
 
 function closeTaskModal() {
-    // 如果表单已修改且未保存，提示用户
+    // 默认保存草稿，不再提示
     if (taskFormDirty && !currentEditingTaskId) {
-        if (confirm('有未保存的内容，是否保存为草稿？')) {
-            saveDraft();
-        } else {
-            localStorage.removeItem('task-draft');
-        }
+        saveDraft();
     }
     
     document.getElementById('taskModal').classList.remove('show');
@@ -420,19 +411,9 @@ async function editTask(taskId) {
         document.getElementById('taskMd5').checked = task.verify_md5;
         document.getElementById('taskEnabled').checked = task.enabled;
         
-        // 设置调度模式
-        const scheduleType = task.schedule_type || 'INTERVAL';
-        if (scheduleType === 'CRON') {
-            document.querySelector('input[name="scheduleType"][value="CRON"]').checked = true;
-            document.getElementById('cronExpression').value = task.cron_expression || '';
-            validateCron();
-        } else {
-            document.querySelector('input[name="scheduleType"][value="INTERVAL"]').checked = true;
-            const interval = task.interval || 300;
-            document.getElementById('intervalSeconds').value = interval;
-            updateIntervalDisplay();
-        }
-        toggleScheduleMode();
+        // 填充 Cron 表达式
+        document.getElementById('cronExpression').value = task.cron_expression || '';
+        validateCron();
         
         document.getElementById('taskModal').classList.add('show');
         initDirectoryAutocomplete();
@@ -445,32 +426,20 @@ async function editTask(taskId) {
 document.getElementById('taskForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     
-    // 获取调度类型
-    const scheduleType = document.querySelector('input[name="scheduleType"]:checked').value;
-    
     const taskData = {
         name: document.getElementById('taskName').value,
         source_path: document.getElementById('taskSource').value,
         target_path: document.getElementById('taskTarget').value,
-        schedule_type: scheduleType,
+        schedule_type: 'CRON',  // 只支持 Cron 模式
+        cron_expression: document.getElementById('cronExpression').value.trim(),
         recursive: document.getElementById('taskRecursive').checked,
         verify_md5: document.getElementById('taskMd5').checked,
         enabled: document.getElementById('taskEnabled').checked
     };
     
-    // 根据调度类型添加相应字段
-    if (scheduleType === 'CRON') {
-        taskData.cron_expression = document.getElementById('cronExpression').value.trim();
-        if (!taskData.cron_expression) {
-            showNotification('Cron 表达式不能为空', 'error');
-            return;
-        }
-    } else {
-        taskData.interval = parseInt(document.getElementById('intervalSeconds').value);
-        if (taskData.interval < 5) {
-            showNotification('同步间隔需大于等于 5 秒', 'error');
-            return;
-        }
+    if (!taskData.cron_expression) {
+        showNotification('Cron 表达式不能为空', 'error');
+        return;
     }
     
     try {
@@ -499,19 +468,13 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'intervalSeconds', 'intervalMinutes', 'intervalHours', 'cronExpression', 'taskRecursive', 'taskMd5', 'taskEnabled'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskRecursive', 'taskMd5', 'taskEnabled'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener('input', () => { taskFormDirty = true; });
             el.addEventListener('change', () => { taskFormDirty = true; });
         }
-    });
-    
-    // 监听调度模式切换
-    const scheduleRadios = document.querySelectorAll('input[name="scheduleType"]');
-    scheduleRadios.forEach(radio => {
-        radio.addEventListener('change', () => { taskFormDirty = true; });
     });
 }
 
@@ -746,68 +709,6 @@ function closeOverlay(id) {
 
 // ========== Cron 相关功能 ==========
 
-// 调度模式切换
-function toggleScheduleMode() {
-    const scheduleType = document.querySelector('input[name="scheduleType"]:checked').value;
-    const intervalConfig = document.getElementById('intervalConfig');
-    const cronConfig = document.getElementById('cronConfig');
-    const intervalLabel = document.getElementById('scheduleTypeInterval');
-    const cronLabel = document.getElementById('scheduleTypeCron');
-    
-    if (scheduleType === 'CRON') {
-        intervalConfig.style.display = 'none';
-        cronConfig.style.display = 'block';
-        intervalLabel.className = 'flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-blue-300 transition-all';
-        cronLabel.className = 'flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-blue-500 bg-blue-50 transition-all';
-    } else {
-        intervalConfig.style.display = 'block';
-        cronConfig.style.display = 'none';
-        intervalLabel.className = 'flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-blue-500 bg-blue-50 transition-all';
-        cronLabel.className = 'flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-blue-300 transition-all';
-    }
-    taskFormDirty = true;
-}
-
-// 间隔时间更新
-function updateIntervalDisplay() {
-    const seconds = parseInt(document.getElementById('intervalSeconds').value) || 0;
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(seconds / 3600);
-    
-    document.getElementById('intervalMinutes').value = minutes;
-    document.getElementById('intervalHours').value = hours;
-    
-    let display = '';
-    if (hours > 0) {
-        const remainMin = minutes % 60;
-        display = hours + ' 小时' + (remainMin > 0 ? ' ' + remainMin + ' 分钟' : '');
-    } else if (minutes > 0) {
-        display = minutes + ' 分钟';
-    } else {
-        display = seconds + ' 秒';
-    }
-    
-    document.getElementById('intervalTotal').textContent = display;
-}
-
-function updateIntervalFromMinutes() {
-    const minutes = parseInt(document.getElementById('intervalMinutes').value) || 0;
-    const seconds = minutes * 60;
-    if (seconds >= 5) {
-        document.getElementById('intervalSeconds').value = seconds;
-        updateIntervalDisplay();
-    }
-}
-
-function updateIntervalFromHours() {
-    const hours = parseInt(document.getElementById('intervalHours').value) || 0;
-    const seconds = hours * 3600;
-    if (seconds >= 5) {
-        document.getElementById('intervalSeconds').value = seconds;
-        updateIntervalDisplay();
-    }
-}
-
 // Cron 验证
 let cronValidationTimeout = null;
 async function validateCron() {
@@ -920,22 +821,13 @@ async function generateRandomCron() {
             if (currentView === 'queue') loadQueue();
         }, 3000);
         
-        // 修改模态框点击外部关闭逻辑
+        // 修改任务模态框逻辑：禁用点击外部关闭，只支持 X 按钮和 ESC 键
         const taskModal = document.getElementById('taskModal');
         if (taskModal) {
-            taskModal.addEventListener('click', (e) => {
-                // 只有点击背景层时才关闭，点击卡片内部不关闭
-                if (e.target.id === 'taskModal') {
-                    if (taskFormDirty && !currentEditingTaskId) {
-                        if (confirm('有未保存的内容，是否保存为草稿？')) {
-                            saveDraft();
-                        } else {
-                            localStorage.removeItem('task-draft');
-                        }
-                    }
-                    taskModal.classList.remove('show');
-                    taskFormDirty = false;
-                    removeDirectoryAutocomplete();
+            // 监听 ESC 键
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && taskModal.classList.contains('show')) {
+                    closeTaskModal();
                 }
             });
         }

@@ -39,7 +39,12 @@ class TaskScheduler:
         self.task_context_callback: Optional[Callable[[Optional[str]], None]] = None  # 任务上下文回调
         
         # 确保配置目录存在
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.log_callback:
+                self.log_callback(f"✓ 配置目录已创建: {self.config_path.parent}")
+        except Exception as e:
+            print(f"⚠️ 创建配置目录失败: {e}")
         
         # 加载已保存的任务
         self.load_tasks()
@@ -97,11 +102,13 @@ class TaskScheduler:
             # 保存配置
             self.save_tasks()
             
-            self._log(f"✓ 任务已添加: {task.name} (每 {task.interval} 秒)")
+            self._log(f"✓ 任务添加完成: {task.name}")
             return True
             
         except Exception as e:
             self._log(f"✗ 添加任务失败: {task.name} - {str(e)}")
+            import traceback
+            self._log(f"错误详情: {traceback.format_exc()}")
             return False
     
     def remove_task(self, task_id: str) -> bool:
@@ -399,7 +406,7 @@ class TaskScheduler:
         """从配置文件加载任务"""
         try:
             if not self.config_path.exists():
-                self._log("配置文件不存在，使用空任务列表")
+                self._log(f"ℹ️ 配置文件不存在，使用空任务列表")
                 return
             
             with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -416,10 +423,15 @@ class TaskScheduler:
             
         except Exception as e:
             self._log(f"✗ 加载任务配置失败: {str(e)}")
+            import traceback
+            self._log(f"错误详情: {traceback.format_exc()}")
     
     def save_tasks(self):
         """保存任务到配置文件"""
         try:
+            # 确保配置目录存在
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            
             data = {
                 "tasks": [task.to_dict() for task in self.tasks.values()],
                 "last_saved": datetime.now().isoformat()
@@ -428,8 +440,12 @@ class TaskScheduler:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             
+            self._log(f"💾 配置已保存")
+            
         except Exception as e:
             self._log(f"✗ 保存任务配置失败: {str(e)}")
+            import traceback
+            self._log(f"错误详情: {traceback.format_exc()}")
     
     def trigger_task_now(self, task_id: str) -> bool:
         """

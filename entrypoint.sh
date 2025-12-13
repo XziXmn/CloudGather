@@ -3,7 +3,7 @@ set -e
 
 # 显示版本信息
 echo "=========================================="
-echo "  CloudGather (云集) v${APP_VERSION:-0.3.1}"
+echo "  CloudGather (云集) v${APP_VERSION:-0.3.5}"
 echo "  媒体文件同步工具"
 echo "=========================================="
 echo ""
@@ -18,9 +18,24 @@ PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 
 echo "👤 用户权限信息:"
-echo "   运行用户: $(id -u):$(id -g)"
+echo "   容器当前用户: $(id -u):$(id -g)"
 echo "   配置 PUID: ${PUID}"
 echo "   配置 PGID: ${PGID}"
+echo ""
+
+# 创建运行用户组和用户（如果不存在）
+if ! getent group ${PGID} > /dev/null 2>&1; then
+    groupadd -g ${PGID} cloudgather
+fi
+
+if ! getent passwd ${PUID} > /dev/null 2>&1; then
+    useradd -u ${PUID} -g ${PGID} -d /app -s /bin/bash cloudgather
+fi
+
+# 设置配置目录权限
+chown -R ${PUID}:${PGID} /app/config 2>/dev/null || true
+
+echo "   实际运行用户: ${PUID}:${PGID}"
 echo ""
 
 # 显示配置信息
@@ -34,5 +49,5 @@ echo "  启动应用..."
 echo "=========================================="
 echo ""
 
-# 直接运行应用
-exec "$@"
+# 使用 gosu 以指定用户身份运行应用
+exec gosu ${PUID}:${PGID} "$@"

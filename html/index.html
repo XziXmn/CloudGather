@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CloudGather - 云集媒体同步</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%235b8bff'/%3E%3Ctext x='50' y='70' font-size='60' text-anchor='middle' fill='white' font-family='Arial'%3E☁️%3C/text%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
@@ -181,7 +183,7 @@
             <header class="topbar">
                 <div class="flex items-center gap-3">
                     <button class="btn btn-secondary md:hidden" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
-                    <h1 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-cloud text-blue-500"></i>CloudGather</h1>
+                    <h1 class="text-lg font-bold">CloudGather</h1>
                 </div>
                 <div class="flex items-center gap-3">
                     <button id="themeToggle" class="btn btn-secondary" onclick="toggleTheme()"><i class="fas fa-sun"></i><span class="hidden sm:inline">浅色</span></button>
@@ -270,9 +272,60 @@
                     <h2 class="text-xl font-bold">系统设置</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="card">
-                            <p class="text-sm text-gray-500">运行环境</p>
-                            <p class="mt-1 font-semibold" id="is-docker">-</p>
-                            <p class="text-xs text-gray-500 mt-1">配置路径：<span id="config-path" class="font-mono">-</span></p>
+                            <h3 class="font-bold text-lg mb-3 flex items-center gap-2"><i class="fas fa-server text-blue-500"></i>运行环境</h3>
+                            <div class="space-y-2">
+                                <div>
+                                    <p class="text-sm text-gray-500">环境类型</p>
+                                    <p class="mt-1 font-semibold" id="is-docker">-</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-500">配置路径</p>
+                                    <p class="mt-1 font-mono text-sm" id="config-path">-</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="card">
+                            <h3 class="font-bold text-lg mb-3 flex items-center gap-2"><i class="fas fa-info-circle text-purple-500"></i>版本信息</h3>
+                            <div class="space-y-2">
+                                <div>
+                                    <p class="text-sm text-gray-500">当前版本</p>
+                                    <p class="mt-1 font-semibold text-blue-600" id="app-version">-</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-500">项目主页</p>
+                                    <a href="https://github.com/XziXmn/CloudGather" target="_blank" class="mt-1 text-blue-500 hover:text-blue-700 hover:underline text-sm flex items-center gap-1">
+                                        <i class="fab fa-github"></i>github.com/XziXmn/CloudGather
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="card md:col-span-2">
+                            <h3 class="font-bold text-lg mb-3 flex items-center gap-2"><i class="fas fa-copyright text-pink-500"></i>版权信息</h3>
+                            <div class="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-lg p-4 border border-blue-100 dark:border-blue-800">
+                                <div class="flex items-center justify-between flex-wrap gap-4">
+                                    <div class="flex items-center gap-3">
+                                        <div class="h-12 w-12 rounded-xl bg-blue-500 text-white flex items-center justify-center text-2xl">
+                                            <i class="fas fa-cloud"></i>
+                                        </div>
+                                        <div>
+                                            <h4 class="font-bold text-lg">CloudGather</h4>
+                                            <p class="text-sm text-gray-600 dark:text-gray-400">云集媒体同步工具</p>
+                                        </div>
+                                    </div>
+                                    <div class="text-right">
+                                        <p class="text-sm text-gray-600 dark:text-gray-400">作者</p>
+                                        <p class="font-bold text-lg text-blue-600">XziXmn</p>
+                                    </div>
+                                </div>
+                                <div class="mt-4 pt-4 border-t border-blue-200 dark:border-blue-800">
+                                    <p class="text-xs text-gray-500 text-center">
+                                        Copyright © 2025 XziXmn. All rights reserved. | 
+                                        <a href="https://github.com/XziXmn/CloudGather/blob/main/LICENSE" target="_blank" class="text-blue-500 hover:underline">MIT License</a>
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </section>
@@ -328,47 +381,12 @@
                         <input type="text" id="taskTarget" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/target/movies" autocomplete="off">
                     </div>
                     
-                    <!-- 调度模式选择 -->
-                    <div class="md:col-span-2">
-                        <label class="block text-sm text-gray-600 mb-3">调度模式 *</label>
-                        <div class="flex gap-4">
-                            <label class="flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-blue-500 bg-blue-50 transition-all" id="scheduleTypeInterval">
-                                <input type="radio" name="scheduleType" value="INTERVAL" checked class="w-4 h-4" onchange="toggleScheduleMode()">
-                                <span class="font-semibold">⏱️ 间隔调度</span>
-                            </label>
-                            <label class="flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 border-gray-200 hover:border-blue-300 transition-all" id="scheduleTypeCron">
-                                <input type="radio" name="scheduleType" value="CRON" class="w-4 h-4" onchange="toggleScheduleMode()">
-                                <span class="font-semibold">📅 Cron 调度</span>
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <!-- 间隔调度配置 -->
-                    <div id="intervalConfig" class="md:col-span-2">
-                        <label class="block text-sm text-gray-600 mb-2">同步间隔 *</label>
-                        <div class="grid grid-cols-3 gap-3">
-                            <div>
-                                <label class="block text-xs text-gray-500 mb-1">秒</label>
-                                <input type="number" id="intervalSeconds" min="5" value="300" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white text-sm" onchange="updateIntervalDisplay()">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-500 mb-1">分钟</label>
-                                <input type="number" id="intervalMinutes" min="0" value="5" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white text-sm" onchange="updateIntervalFromMinutes()">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-500 mb-1">小时</label>
-                                <input type="number" id="intervalHours" min="0" value="0" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white text-sm" onchange="updateIntervalFromHours()">
-                            </div>
-                        </div>
-                        <p class="text-xs text-gray-500 mt-2">ℹ️ 总间隔: <span id="intervalTotal" class="font-semibold text-blue-600">5 分钟</span></p>
-                    </div>
-                    
                     <!-- Cron 调度配置 -->
-                    <div id="cronConfig" class="md:col-span-2" style="display: none;">
+                    <div id="cronConfig" class="md:col-span-2">
                         <label class="block text-sm text-gray-600 mb-2">
 Cron 表达式 * <span class="text-xs text-gray-400">(格式: 分 时 日 月 星期)</span></label>
                         <div class="flex gap-2 mb-2">
-                            <input type="text" id="cronExpression" class="flex-1 px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white font-mono" placeholder="0 2 * * *" oninput="validateCron()">
+                            <input type="text" id="cronExpression" class="flex-1 px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white font-mono" placeholder="0 2 * * *" oninput="validateCron()" required>
                             <button type="button" onclick="showCronPresets()" class="btn btn-secondary whitespace-nowrap"><i class="fas fa-list"></i> 预设</button>
                             <button type="button" onclick="generateRandomCron()" class="btn btn-secondary"><i class="fas fa-dice"></i></button>
                         </div>

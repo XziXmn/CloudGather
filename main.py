@@ -18,7 +18,7 @@ from core.scheduler import TaskScheduler
 from core.models import SyncTask
 
 # 版本信息
-VERSION = "0.3.1"
+VERSION = "0.3.5"
 
 # 配置日志格式
 logging.basicConfig(
