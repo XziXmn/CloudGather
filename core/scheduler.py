@@ -318,6 +318,7 @@ class TaskScheduler:
                     stats = syncer.sync_directory(
                         recursive=task.recursive,
                         verify_md5=task.verify_md5,
+                        overwrite_existing=task.overwrite_existing,
                         log_callback=self._log
                     )
                     

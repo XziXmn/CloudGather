@@ -148,6 +148,50 @@
         .status-running { background: #e3f7ec; color: #16a34a; }
         .status-queued { background: #fff4dd; color: #d97706; }
         .status-error { background: #fde2e2; color: #dc2626; }
+        
+        /* 开关按钮样式 */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #cbd5e1;
+            transition: .3s;
+            border-radius: 24px;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .toggle-slider {
+            background-color: var(--primary);
+        }
+        input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+        .toggle-slider:hover {
+            opacity: 0.9;
+        }
 
         .progress-bar { height: 10px; background: var(--muted); border-radius: 999px; overflow: hidden; }
         .progress-fill { height: 100%; background: var(--primary); transition: width 0.3s ease; }
@@ -418,6 +462,41 @@
                         <input type="text" id="taskTarget" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/target/movies" autocomplete="off">
                     </div>
                     
+                    <!-- 同步规则 -->
+                    <div class="md:col-span-2">
+                        <label class="block text-sm text-gray-600 mb-3">同步规则</label>
+                        <div class="flex flex-wrap gap-6 text-sm items-center">
+                            <label class="flex items-center gap-3 cursor-pointer" title="开启后会同步源目录及所有子目录中的文件">
+                                <span>递归</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="taskRecursive" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </label>
+                            <label class="flex items-center gap-3 cursor-pointer" title="跳过目标目录中已存在的文件（与覆盖同步互斥）">
+                                <span>跳过</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="taskSkip" checked onchange="handleSyncModeChange('skip')">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </label>
+                            <label class="flex items-center gap-3 cursor-pointer" title="覆盖目标目录中已存在的文件（与跳过已存在互斥）">
+                                <span>覆盖</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="taskOverwrite" onchange="handleSyncModeChange('overwrite')">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </label>
+                            <label class="flex items-center gap-3 cursor-pointer" title="开启后会验证文件MD5值，确保文件完整性（会降低同步速度，网盘模式不可用）">
+                                <span>文件校验</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="taskMd5">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </label>
+                        </div>
+                    </div>
+                    
                     <!-- Cron 调度配置 -->
                     <div id="cronConfig" class="md:col-span-2">
                         <label class="block text-sm text-gray-600 mb-2">
@@ -431,12 +510,6 @@ Cron 表达式 * <span class="text-xs text-gray-400">(格式: 分 时 日 月 �
                         <div id="cronPresetList" class="mt-2" style="display: none;">
                             <div class="max-h-48 overflow-y-auto bg-gray-50 rounded-lg p-2 space-y-1"></div>
                         </div>
-                    </div>
-                    
-                    <div class="md:col-span-2 flex flex-wrap gap-6 text-sm">
-                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskRecursive" checked class="w-5 h-5"><span>递归同步</span></label>
-                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskMd5" class="w-5 h-5"><span>MD5校验</span></label>
-                        <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskEnabled" checked class="w-5 h-5"><span>启用任务</span></label>
                     </div>
                 </div>
                 <div class="flex justify-end gap-3 pt-4">

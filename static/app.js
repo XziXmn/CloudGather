@@ -204,9 +204,15 @@ function renderTasks(tasks) {
                     <div class="flex items-center gap-3 mb-1">
                         <h4 class="text-lg font-bold">${task.name}</h4>
                         <span class="status-badge-container">${getStatusBadge(task.status)}</span>
-                        ${task.enabled ? '<span class="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">已启用</span>' : '<span class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded">已禁用</span>'}
                         ${task.schedule_type === 'CRON' ? '<span class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded"><i class="fas fa-calendar-alt mr-1"></i>Cron</span>' : '<span class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded"><i class="fas fa-clock mr-1"></i>间隔</span>'}
                     </div>
+                </div>
+                <div class="flex items-center gap-2" title="${task.enabled ? '任务已启用' : '任务已禁用'}">
+                    <span class="text-sm text-gray-600">${task.enabled ? '已启用' : '已禁用'}</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${task.enabled ? 'checked' : ''} onchange="toggleTaskEnabled('${task.id}', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
@@ -344,7 +350,8 @@ function showAddTaskModal() {
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
     document.getElementById('taskRecursive').checked = true;
-    document.getElementById('taskEnabled').checked = true;
+    document.getElementById('taskSkip').checked = true;  // 默认跳过已存在文件
+    document.getElementById('taskOverwrite').checked = false;
     
     document.getElementById('taskModal').classList.add('show');
     
@@ -362,7 +369,11 @@ function loadDraft() {
             document.getElementById('taskInterval').value = draft.interval || 300;
             document.getElementById('taskRecursive').checked = draft.recursive !== false;
             document.getElementById('taskMd5').checked = draft.verify_md5 || false;
-            document.getElementById('taskEnabled').checked = draft.enabled !== false;
+            
+            // 处理互斥逻辑
+            const overwrite = draft.overwrite_existing || false;
+            document.getElementById('taskSkip').checked = !overwrite;
+            document.getElementById('taskOverwrite').checked = overwrite;
         }
     } catch (e) {
         console.error('加载草稿失败:', e);
@@ -378,7 +389,7 @@ function saveDraft() {
         interval: parseInt(document.getElementById('taskInterval').value) || 300,
         recursive: document.getElementById('taskRecursive').checked,
         verify_md5: document.getElementById('taskMd5').checked,
-        enabled: document.getElementById('taskEnabled').checked
+        overwrite_existing: document.getElementById('taskOverwrite').checked
     };
     localStorage.setItem('task-draft', JSON.stringify(draft));
 }
@@ -395,6 +406,31 @@ function closeTaskModal() {
     
     // 移除目录提示
     removeDirectoryAutocomplete();
+}
+
+// 处理同步模式互斥逻辑
+function handleSyncModeChange(mode) {
+    const skipCheckbox = document.getElementById('taskSkip');
+    const overwriteCheckbox = document.getElementById('taskOverwrite');
+    
+    if (mode === 'skip' && skipCheckbox.checked) {
+        // 开启跳过，关闭覆盖
+        overwriteCheckbox.checked = false;
+    } else if (mode === 'overwrite' && overwriteCheckbox.checked) {
+        // 开启覆盖，关闭跳过
+        skipCheckbox.checked = false;
+    }
+    
+    // 确保至少有一个被选中
+    if (!skipCheckbox.checked && !overwriteCheckbox.checked) {
+        if (mode === 'skip') {
+            overwriteCheckbox.checked = true;
+        } else {
+            skipCheckbox.checked = true;
+        }
+    }
+    
+    taskFormDirty = true;
 }
 
 // 加载一言（自动调用）
@@ -439,6 +475,12 @@ async function editTask(taskId) {
         document.getElementById('taskTarget').value = task.target_path;
         document.getElementById('taskRecursive').checked = task.recursive;
         document.getElementById('taskMd5').checked = task.verify_md5;
+        
+        // 处理互斥逻辑
+        const overwrite = task.overwrite_existing || false;
+        document.getElementById('taskSkip').checked = !overwrite;
+        document.getElementById('taskOverwrite').checked = overwrite;
+        
         document.getElementById('taskEnabled').checked = task.enabled;
         
         // 填充 Cron 表达式
@@ -464,7 +506,8 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         cron_expression: document.getElementById('cronExpression').value.trim(),
         recursive: document.getElementById('taskRecursive').checked,
         verify_md5: document.getElementById('taskMd5').checked,
-        enabled: document.getElementById('taskEnabled').checked
+        overwrite_existing: document.getElementById('taskOverwrite').checked,
+        enabled: true  // 默认启用，后续可通过开关控制
     };
     
     if (!taskData.cron_expression) {
@@ -498,7 +541,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskRecursive', 'taskMd5', 'taskEnabled'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskRecursive', 'taskMd5', 'taskSkip', 'taskOverwrite'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -683,6 +726,29 @@ async function deleteTask(taskId, taskName) {
     } catch (error) {
         console.error('删除任务失败:', error);
         showNotification('删除任务失败', 'error');
+    }
+}
+
+async function toggleTaskEnabled(taskId, enabled) {
+    try {
+        const response = await fetch(`/api/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled })
+        });
+        const result = await response.json();
+        if (result.success) {
+            showNotification(enabled ? '任务已启用' : '任务已禁用', 'success');
+            loadTasks();
+        } else {
+            showNotification(result.error || '操作失败', 'error');
+            // 恢复原来的状态
+            loadTasks();
+        }
+    } catch (error) {
+        console.error('切换任务状态失败:', error);
+        showNotification('操作失败', 'error');
+        loadTasks();
     }
 }
 

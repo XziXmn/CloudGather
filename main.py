@@ -19,7 +19,7 @@ from core.scheduler import TaskScheduler
 from core.models import SyncTask
 
 # 版本信息
-VERSION = "0.3.7"
+VERSION = "0.3.8"
 
 # 配置日志格式
 logging.basicConfig(
@@ -178,7 +178,8 @@ def api_tasks():
             interval=300,  # cron 模式下 interval 不使用，但需要默认值
             recursive=_parse_bool(data.get('recursive', True), True),
             verify_md5=_parse_bool(data.get('verify_md5', False), False),
-            enabled=_parse_bool(data.get('enabled', True), True)
+            enabled=_parse_bool(data.get('enabled', True), True),
+            overwrite_existing=_parse_bool(data.get('overwrite_existing', False), False)
         )
     else:
         # 间隔调度
@@ -198,7 +199,8 @@ def api_tasks():
             interval=interval,
             recursive=_parse_bool(data.get('recursive', True), True),
             verify_md5=_parse_bool(data.get('verify_md5', False), False),
-            enabled=_parse_bool(data.get('enabled', True), True)
+            enabled=_parse_bool(data.get('enabled', True), True),
+            overwrite_existing=_parse_bool(data.get('overwrite_existing', False), False)
         )
 
     if scheduler.add_task(task):
@@ -237,6 +239,8 @@ def api_task_detail(task_id: str):
         updates['verify_md5'] = _parse_bool(data['verify_md5'], task.verify_md5)
     if 'enabled' in data:
         updates['enabled'] = _parse_bool(data['enabled'], task.enabled)
+    if 'overwrite_existing' in data:
+        updates['overwrite_existing'] = _parse_bool(data['overwrite_existing'], task.overwrite_existing)
 
     if 'interval' in updates and updates['interval'] is not None and updates['interval'] < 5:
         return jsonify({'success': False, 'error': '同步间隔需大于等于 5 秒'}), 400
@@ -476,12 +480,15 @@ if __name__ == '__main__':
     # 获取一言
     hitokoto = fetch_hitokoto()
     
-    # 启动信息
-    print(f'\n✅ CloudGather v{VERSION} 启动成功')
-    print(f'⏰ 时区: {os.getenv("TZ", "UTC")}')
-    print(f'🌐 访问地址: http://127.0.0.1:8080')
-    print(f'💬 一言: {hitokoto}')
-    print('▶️  服务运行中... (按 CTRL+C 停止)\n')
+    # 只在非 debug 模式或主进程中显示启动信息
+    # debug 模式下，os.environ.get('WERKZEUG_RUN_MAIN') 只在子进程中为 'true'
+    if IS_DOCKER or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        # 启动信息
+        print(f'\n✅ CloudGather v{VERSION} 启动成功')
+        print(f'⏰ 时区: {os.getenv("TZ", "UTC")}')
+        print(f'🌐 访问地址: http://127.0.0.1:8080')
+        print(f'💬 一言: {hitokoto}')
+        print('▶️  服务运行中... (按 CTRL+C 停止)\n')
     
     # 启动 Flask
     app.run(

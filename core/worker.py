@@ -154,6 +154,7 @@ class FileSyncer:
         source_file: Path,
         target_file: Path,
         verify_md5: bool = False,
+        overwrite_existing: bool = False,
         log_callback: Optional[Callable[[str], None]] = None
     ) -> str:
         """
@@ -163,10 +164,11 @@ class FileSyncer:
             source_file: 源文件路径
             target_file: 目标文件路径
             verify_md5: 是否进行 MD5 校验
+            overwrite_existing: 是否覆盖已存在的文件（True=覆盖，False=跳过）
             log_callback: 日志回调函数
             
         Returns:
-            同步状态: "Success", "Skipped (Ignored)", "Skipped (Active)", "Failed"
+            同步状态: "Success", "Skipped (Ignored)", "Skipped (Active)", "Skipped (Exists)", "Failed"
         """
         try:
             # 1. 垃圾过滤
@@ -175,18 +177,24 @@ class FileSyncer:
                     log_callback(f"已忽略: {source_file.name} (垃圾文件)")
                 return "Skipped (Ignored)"
             
-            # 2. 静默期检测
+            # 2. 检查目标文件是否已存在
+            if not overwrite_existing and target_file.exists():
+                if log_callback:
+                    log_callback(f"已跳过: {source_file.name} (文件已存在)")
+                return "Skipped (Exists)"
+            
+            # 3. 静默期检测
             is_stable, file_size = self.check_file_stability(source_file, log_callback)
             if not is_stable:
                 if log_callback:
                     log_callback(f"已跳过: {source_file.name} (文件活动中)")
                 return "Skipped (Active)"
             
-            # 3. 准备临时文件路径
+            # 4. 准备临时文件路径
             target_file.parent.mkdir(parents=True, exist_ok=True)
             temp_file = target_file.parent / f".tmp_{target_file.name}"
             
-            # 4. 复制文件
+            # 5. 复制文件
             if log_callback:
                 log_callback(f"开始复制: {source_file.name} ({self._format_size(file_size)})")
             
@@ -196,7 +204,7 @@ class FileSyncer:
             if log_callback:
                 log_callback(f"复制完成: {source_file.name}")
             
-            # 5. 校验文件大小
+            # 6. 校验文件大小
             temp_size = temp_file.stat().st_size
             if temp_size != file_size:
                 if log_callback:
@@ -208,7 +216,7 @@ class FileSyncer:
                 temp_file.unlink()
                 return "Failed"
             
-            # 6. MD5 校验（可选）
+            # 7. MD5 校验（可选）
             if verify_md5:
                 if log_callback:
                     log_callback(f"开始 MD5 校验: {source_file.name}")
@@ -228,7 +236,7 @@ class FileSyncer:
                 if log_callback:
                     log_callback(f"MD5 校验通过: {source_file.name}")
             
-            # 7. 原子化重命名
+            # 8. 原子化重命名
             if target_file.exists():
                 target_file.unlink()
             
@@ -256,6 +264,7 @@ class FileSyncer:
         self,
         recursive: bool = True,
         verify_md5: bool = False,
+        overwrite_existing: bool = False,
         log_callback: Optional[Callable[[str], None]] = None
     ) -> dict:
         """
@@ -264,6 +273,7 @@ class FileSyncer:
         Args:
             recursive: 是否递归同步子目录
             verify_md5: 是否进行 MD5 校验
+            overwrite_existing: 是否覆盖已存在的文件
             log_callback: 日志回调函数
             
         Returns:
@@ -273,6 +283,7 @@ class FileSyncer:
             "success": 0,
             "skipped_ignored": 0,
             "skipped_active": 0,
+            "skipped_exists": 0,
             "failed": 0,
             "total": 0
         }
@@ -293,7 +304,7 @@ class FileSyncer:
             target_file = self.target_dir / relative_path
             
             # 同步文件
-            result = self.sync_file(source_file, target_file, verify_md5, log_callback)
+            result = self.sync_file(source_file, target_file, verify_md5, overwrite_existing, log_callback)
             
             # 更新统计
             if result == "Success":
@@ -302,6 +313,8 @@ class FileSyncer:
                 stats["skipped_ignored"] += 1
             elif result == "Skipped (Active)":
                 stats["skipped_active"] += 1
+            elif result == "Skipped (Exists)":
+                stats["skipped_exists"] += 1
             elif result == "Failed":
                 stats["failed"] += 1
         
@@ -312,6 +325,7 @@ class FileSyncer:
                 f"\n  成功: {stats['success']}"
                 f"\n  跳过(垃圾): {stats['skipped_ignored']}"
                 f"\n  跳过(活动): {stats['skipped_active']}"
+                f"\n  跳过(已存在): {stats['skipped_exists']}"
                 f"\n  失败: {stats['failed']}"
             )
         

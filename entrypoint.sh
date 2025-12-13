@@ -3,7 +3,7 @@ set -e
 
 # 显示版本信息
 echo "=========================================="
-echo "  CloudGather (云集) v${APP_VERSION:-0.3.7}"
+echo "  CloudGather (云集) v${APP_VERSION:-0.3.8}"
 echo "  媒体文件同步工具"
 echo "=========================================="
 echo ""
