@@ -6,3 +6,6 @@ apscheduler>=3.10.0
 
 # 系统资源监控
 psutil>=5.9.0
+
+# HTTP 请求
+requests>=2.31.0

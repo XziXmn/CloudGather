@@ -9,6 +9,7 @@ import os
 import psutil
 import threading
 import logging
+import requests
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -18,7 +19,7 @@ from core.scheduler import TaskScheduler
 from core.models import SyncTask
 
 # 版本信息
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 
 # 配置日志格式
 logging.basicConfig(
@@ -459,11 +460,27 @@ def _cleanup():
         scheduler.stop()
 
 
+def fetch_hitokoto():
+    """获取一言"""
+    try:
+        response = requests.get('https://v1.hitokoto.cn/', timeout=5)
+        data = response.json()
+        text = data.get('hitokoto', '今天也要加油哦！')
+        from_who = data.get('from', '')
+        return f"{text} —— {from_who}" if from_who else text
+    except Exception as e:
+        return '保持热爱，奔赴山海'
+
+
 if __name__ == '__main__':
+    # 获取一言
+    hitokoto = fetch_hitokoto()
+    
     # 启动信息
     print(f'\n✅ CloudGather v{VERSION} 启动成功')
     print(f'⏰ 时区: {os.getenv("TZ", "UTC")}')
     print(f'🌐 访问地址: http://127.0.0.1:8080')
+    print(f'💬 一言: {hitokoto}')
     print('▶️  服务运行中... (按 CTRL+C 停止)\n')
     
     # 启动 Flask

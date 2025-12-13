@@ -48,44 +48,65 @@
         .app-shell { display: flex; min-height: 100vh; }
 
         .sidebar {
-            width: 240px;
+            width: 200px;
             background: var(--panel);
             border-right: 1px solid var(--panel-stroke);
-            box-shadow: var(--shadow);
-            padding: 16px 12px;
+            padding: 20px 0;
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 4px;
             position: sticky;
             top: 0;
             height: 100vh;
             z-index: 30;
-            transition: width 0.2s ease;
+            transition: all 0.2s ease;
         }
-        .sidebar.collapsed { width: 76px; }
-        .sidebar.collapsed:hover { width: 240px; }
-        .logo { display: flex; align-items: center; gap: 10px; padding: 10px; }
-        .logo-text { font-weight: 800; font-size: 16px; }
+        .sidebar.collapsed { width: 200px; }
+        .logo { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            padding: 10px 20px;
+            margin-bottom: 10px;
+        }
+        .logo-text { font-weight: 700; font-size: 15px; color: var(--text); }
         .hide-when-collapsed { transition: opacity 0.15s ease; }
-        .sidebar.collapsed .hide-when-collapsed { opacity: 0; pointer-events: none; }
+        .sidebar.collapsed .hide-when-collapsed { opacity: 1; }
 
         .nav-item {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 12px;
-            border-radius: 12px;
-            background: var(--panel);
-            border: 1px solid var(--panel-stroke);
+            gap: 12px;
+            padding: 10px 20px;
             cursor: pointer;
             color: var(--subtext);
-            font-weight: 700;
+            font-weight: 500;
+            font-size: 14px;
             transition: all 0.2s ease;
+            border-left: 3px solid transparent;
         }
-        .nav-item.active { color: var(--primary-strong); border-color: var(--primary-strong); background: #eef2ff; }
-        [data-theme="dark"] .nav-item.active { background: #202c42; }
-        .nav-item:hover { border-color: var(--primary); color: var(--text); }
-        .collapse-btn { margin-top: auto; }
+        .nav-item i { width: 18px; text-align: center; }
+        .nav-item.active { 
+            color: var(--primary); 
+            border-left-color: var(--primary);
+            background: rgba(91, 139, 255, 0.08);
+        }
+        [data-theme="dark"] .nav-item.active { background: rgba(91, 139, 255, 0.15); }
+        .nav-item:hover { 
+            color: var(--primary); 
+            background: rgba(91, 139, 255, 0.05);
+        }
+        .hitokoto-section { 
+            margin-top: auto; 
+            padding: 15px 20px;
+            border-top: 1px solid var(--panel-stroke);
+        }
+        .hitokoto-text {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--subtext);
+            font-style: italic;
+        }
 
         .sidebar-mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 25; }
 
@@ -170,20 +191,25 @@
     <div class="app-shell">
         <aside id="sidebar" class="sidebar">
             <div class="logo">
-                <div class="h-10 w-10 rounded-xl bg-blue-500 text-white flex items-center justify-center"><i class="fas fa-cloud"></i></div>
-                <div class="logo-text hide-when-collapsed">CloudGather</div>
+                <div class="h-8 w-8 rounded-lg bg-blue-500 text-white flex items-center justify-center text-sm"><i class="fas fa-cloud"></i></div>
+                <div class="logo-text">CloudGather</div>
             </div>
-            <div class="nav-item active" data-view="dashboard" onclick="switchView('dashboard', this)"><i class="fas fa-gauge"></i><span class="hide-when-collapsed">仪表盘</span></div>
-            <div class="nav-item" data-view="tasks" onclick="switchView('tasks', this)"><i class="fas fa-clipboard-list"></i><span class="hide-when-collapsed">任务列表</span></div>
-            <div class="nav-item" data-view="settings" onclick="switchView('settings', this)"><i class="fas fa-sliders-h"></i><span class="hide-when-collapsed">设置</span></div>
-            <button class="nav-item collapse-btn" onclick="toggleSidebar()"><i class="fas fa-bars"></i><span class="hide-when-collapsed">收起/展开</span></button>
+            <div class="nav-item active" data-view="dashboard" onclick="switchView('dashboard', this)" data-title="仪表盘"><i class="fas fa-gauge"></i><span>仪表盘</span></div>
+            <div class="nav-item" data-view="tasks" onclick="switchView('tasks', this)" data-title="任务列表"><i class="fas fa-clipboard-list"></i><span>任务列表</span></div>
+            <div class="nav-item" data-view="settings" onclick="switchView('settings', this)" data-title="关于"><i class="fas fa-info-circle"></i><span>关于</span></div>
+            <div class="hitokoto-section">
+                <div class="hitokoto-text" id="hitokoto-display">
+                    <i class="fas fa-quote-left text-xs mr-1"></i>
+                    <span id="hitokoto-content">加载中...</span>
+                </div>
+            </div>
         </aside>
 
         <div class="main-content">
             <header class="topbar">
                 <div class="flex items-center gap-3">
                     <button class="btn btn-secondary md:hidden" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
-                    <h1 class="text-lg font-bold">CloudGather</h1>
+                    <h1 class="text-lg font-bold" id="current-view-title">仪表盘</h1>
                 </div>
                 <div class="flex items-center gap-3">
                     <button id="themeToggle" class="btn btn-secondary" onclick="toggleTheme()"><i class="fas fa-sun"></i><span class="hidden sm:inline">浅色</span></button>
@@ -269,7 +295,7 @@
                 </section>
 
                 <section id="view-settings" class="view space-y-4">
-                    <h2 class="text-xl font-bold">系统设置</h2>
+                    <h2 class="text-xl font-bold">关于</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="card">
                             <h3 class="font-bold text-lg mb-3 flex items-center gap-2"><i class="fas fa-server text-blue-500"></i>运行环境</h3>

@@ -1,4 +1,4 @@
-// CloudGather v0.3.5 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度
+// CloudGather v0.3.6 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度 + 一言
 let currentEditingTaskId = null;
 let lastTasksData = null;
 let tasksCache = [];
@@ -48,6 +48,12 @@ function switchView(view, navEl = null) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     const target = document.getElementById(`view-${view}`);
     if (target) target.classList.add('active');
+    
+    // 更新顶部标题
+    const titleEl = document.getElementById('current-view-title');
+    if (titleEl && navEl && navEl.dataset.title) {
+        titleEl.textContent = navEl.dataset.title;
+    }
 
     if (view === 'tasks') {
         loadTasks();
@@ -118,7 +124,7 @@ async function loadSystemStatus() {
         }
         document.getElementById('config-path').textContent = data.config_path;
         document.getElementById('is-docker').textContent = data.is_docker ? 'Docker' : '本地';
-        document.getElementById('app-version').textContent = 'v' + (data.version || '0.3.5');  // 显示版本号
+        document.getElementById('app-version').textContent = 'v' + (data.version || '0.3.6');  // 显示版本号
     } catch (error) {
         console.error('加载系统状态失败:', error);
     }
@@ -394,6 +400,34 @@ function closeTaskModal() {
     // 移除目录提示
     removeDirectoryAutocomplete();
 }
+
+// 加载一言（自动调用）
+async function loadHitokoto() {
+    const contentEl = document.getElementById('hitokoto-content');
+    
+    if (!contentEl) return;
+    
+    try {
+        const response = await fetch('https://v1.hitokoto.cn/');
+        const data = await response.json();
+        
+        // 显示一言内容
+        const text = data.hitokoto || '今天也要加油哦！';
+        const from = data.from ? ` —— ${data.from}` : '';
+        contentEl.textContent = `${text}${from}`;
+        
+    } catch (error) {
+        console.error('加载一言失败:', error);
+        contentEl.textContent = '保持热爱，奔赴山海';
+    }
+}
+
+// 页面加载时自动获取一言
+window.addEventListener('DOMContentLoaded', () => {
+    loadHitokoto();
+    // 每30分钟更新一次一言
+    setInterval(loadHitokoto, 30 * 60 * 1000);
+});
 
 async function editTask(taskId) {
     try {
