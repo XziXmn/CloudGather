@@ -1,4 +1,4 @@
-// CloudGather v0.3.6 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度 + 一言
+// CloudGather v0.3.7 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度 + 一言
 let currentEditingTaskId = null;
 let lastTasksData = null;
 let tasksCache = [];
@@ -28,12 +28,14 @@ function toggleTheme() {
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const mask = document.getElementById('sidebar-mask');
+    
+    // 只在移动端执行切换逻辑
     if (window.innerWidth <= 1024) {
         sidebar.classList.toggle('show');
-        if (mask) mask.style.display = sidebar.classList.contains('show') ? 'block' : 'none';
-        return;
+        if (mask) {
+            mask.classList.toggle('show');
+        }
     }
-    sidebar.classList.toggle('collapsed');
 }
 
 function setActiveNav(view, navEl = null) {
@@ -118,7 +120,7 @@ async function loadSystemStatus() {
         }
         document.getElementById('config-path').textContent = data.config_path;
         document.getElementById('is-docker').textContent = data.is_docker ? 'Docker' : '本地';
-        document.getElementById('app-version').textContent = 'v' + (data.version || '0.3.6');  // 显示版本号
+        document.getElementById('app-version').textContent = 'v' + (data.version || '0.3.7');  // 显示版本号
     } catch (error) {
         console.error('加载系统状态失败:', error);
     }
