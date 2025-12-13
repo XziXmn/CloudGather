@@ -48,12 +48,6 @@ function switchView(view, navEl = null) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     const target = document.getElementById(`view-${view}`);
     if (target) target.classList.add('active');
-    
-    // 更新顶部标题
-    const titleEl = document.getElementById('current-view-title');
-    if (titleEl && navEl && navEl.dataset.title) {
-        titleEl.textContent = navEl.dataset.title;
-    }
 
     if (view === 'tasks') {
         loadTasks();

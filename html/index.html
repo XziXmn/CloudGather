@@ -110,20 +110,8 @@
 
         .sidebar-mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 25; }
 
-        header.topbar {
-            position: sticky;
-            top: 0;
-            z-index: 20;
-            background: var(--panel);
-            border-bottom: 1px solid var(--panel-stroke);
-            padding: 14px 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
         .main-content { flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
-        .content-body { padding: 20px; }
+        .content-body { padding: 24px 32px; max-width: 1400px; }
 
         .card {
             background: var(--panel);
@@ -178,11 +166,11 @@
         .modal-card { width: 100%; max-width: 720px; border-radius: 18px; }
 
         @media (max-width: 1024px) {
-            .sidebar { position: fixed; height: 100vh; left: 0; top: 0; transform: translateX(-100%); transition: transform 0.2s ease, width 0.2s ease; }
+            .sidebar { position: fixed; height: 100vh; left: 0; top: 0; transform: translateX(-100%); transition: transform 0.2s ease; }
             .sidebar.show { transform: translateX(0); }
             .sidebar-mask { display: block; }
             .main-content { margin-left: 0; }
-            header.topbar { position: sticky; top: 0; }
+            .content-body { padding: 16px; }
         }
     </style>
 </head>
@@ -199,30 +187,23 @@
             <div class="nav-item" data-view="settings" onclick="switchView('settings', this)" data-title="关于"><i class="fas fa-info-circle"></i><span>关于</span></div>
             <div class="hitokoto-section">
                 <div class="hitokoto-text" id="hitokoto-display">
-                    <i class="fas fa-quote-left text-xs mr-1"></i>
+                    <span style="opacity: 0.4;">“</span>
                     <span id="hitokoto-content">加载中...</span>
+                    <span style="opacity: 0.4;">”</span>
                 </div>
             </div>
         </aside>
 
         <div class="main-content">
-            <header class="topbar">
-                <div class="flex items-center gap-3">
-                    <button class="btn btn-secondary md:hidden" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
-                    <h1 class="text-lg font-bold" id="current-view-title">仪表盘</h1>
-                </div>
-                <div class="flex items-center gap-3">
-                    <button id="themeToggle" class="btn btn-secondary" onclick="toggleTheme()"><i class="fas fa-sun"></i><span class="hidden sm:inline">浅色</span></button>
-                    <button onclick="openLogWindow('general','全局日志')" class="btn btn-secondary"><i class="fas fa-terminal"></i><span class="hidden sm:inline">日志终端</span></button>
-                </div>
-            </header>
-
             <div class="content-body">
                 <section id="view-dashboard" class="view active space-y-6">
-                    <div class="flex items-center justify-between">
+                    <div class="flex items-center justify-between mb-4">
                         <div class="flex items-center gap-3">
-                            <span class="pill"><i class="fas fa-gauge-high mr-2"></i>仪表盘</span>
-                            <span class="text-sm text-gray-500">运行概览</span>
+                            <h2 class="text-2xl font-bold">仪表盘</h2>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button id="themeToggle" class="btn btn-secondary" onclick="toggleTheme()"><i class="fas fa-sun"></i><span class="hidden sm:inline">浅色</span></button>
+                            <button onclick="openLogWindow('general','全局日志')" class="btn btn-secondary"><i class="fas fa-terminal"></i><span class="hidden sm:inline">日志终端</span></button>
                         </div>
                     </div>
 
@@ -285,8 +266,8 @@
                 </section>
 
                 <section id="view-tasks" class="view space-y-4">
-                    <div class="flex items-center justify-between">
-                        <h2 class="text-xl font-bold">任务列表</h2>
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-2xl font-bold">任务列表</h2>
                         <button onclick="showAddTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加任务</button>
                     </div>
                     <div id="tasks-container" class="space-y-2 card">
@@ -295,7 +276,7 @@
                 </section>
 
                 <section id="view-settings" class="view space-y-4">
-                    <h2 class="text-xl font-bold">关于</h2>
+                    <h2 class="text-2xl font-bold mb-4">关于</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="card">
                             <h3 class="font-bold text-lg mb-3 flex items-center gap-2"><i class="fas fa-server text-blue-500"></i>运行环境</h3>
