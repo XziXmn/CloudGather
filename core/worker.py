@@ -9,6 +9,7 @@ import hashlib
 import shutil
 from pathlib import Path
 from typing import Callable, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class FileSyncer:
@@ -149,6 +150,46 @@ class FileSyncer:
         
         return md5_hash.hexdigest()
     
+    def should_sync_file(self, source_file: Path, target_file: Path, overwrite_existing: bool = False) -> Tuple[bool, str]:
+        """
+        智能判断是否需要同步文件
+        
+        Args:
+            source_file: 源文件路径
+            target_file: 目标文件路径
+            overwrite_existing: 是否覆盖已存在的文件
+            
+        Returns:
+            (should_sync, reason) - 是否需要同步及原因
+        """
+        # 目标文件不存在，需要同步
+        if not target_file.exists():
+            return True, "target_not_exists"
+        
+        # 如果是覆盖模式，直接同步
+        if overwrite_existing:
+            return True, "overwrite_mode"
+        
+        # 跳过模式下，进行智能判断
+        try:
+            source_stat = source_file.stat()
+            target_stat = target_file.stat()
+            
+            # 大小不一致，需要同步
+            if source_stat.st_size != target_stat.st_size:
+                return True, "size_diff"
+            
+            # 修改时间比较（源文件更新）
+            if source_stat.st_mtime > target_stat.st_mtime:
+                return True, "mtime_newer"
+            
+            # 文件相同，无需同步
+            return False, "unchanged"
+            
+        except Exception as e:
+            # 出错时默认需要同步
+            return True, f"check_error: {str(e)}"
+    
     def sync_file(
         self,
         source_file: Path,
@@ -164,11 +205,11 @@ class FileSyncer:
             source_file: 源文件路径
             target_file: 目标文件路径
             verify_md5: 是否进行 MD5 校验
-            overwrite_existing: 是否覆盖已存在的文件（True=覆盖，False=跳过）
+            overwrite_existing: 是否覆盖已存在的文件（True=覆盖，False=智能判断）
             log_callback: 日志回调函数
             
         Returns:
-            同步状态: "Success", "Skipped (Ignored)", "Skipped (Active)", "Skipped (Exists)", "Failed"
+            同步状态: "Success", "Skipped (Ignored)", "Skipped (Active)", "Skipped (Unchanged)", "Failed"
         """
         try:
             # 1. 垃圾过滤
@@ -177,11 +218,15 @@ class FileSyncer:
                     log_callback(f"已忽略: {source_file.name} (垃圾文件)")
                 return "Skipped (Ignored)"
             
-            # 2. 检查目标文件是否已存在
-            if not overwrite_existing and target_file.exists():
+            # 2. 智能判断是否需要同步
+            should_sync, reason = self.should_sync_file(source_file, target_file, overwrite_existing)
+            if not should_sync:
                 if log_callback:
-                    log_callback(f"已跳过: {source_file.name} (文件已存在)")
-                return "Skipped (Exists)"
+                    if reason == "unchanged":
+                        log_callback(f"已跳过: {source_file.name} (文件未变更)")
+                    else:
+                        log_callback(f"已跳过: {source_file.name} ({reason})")
+                return "Skipped (Unchanged)"
             
             # 3. 静默期检测
             is_stable, file_size = self.check_file_stability(source_file, log_callback)
@@ -265,15 +310,17 @@ class FileSyncer:
         recursive: bool = True,
         verify_md5: bool = False,
         overwrite_existing: bool = False,
+        thread_count: int = 1,
         log_callback: Optional[Callable[[str], None]] = None
     ) -> dict:
         """
-        同步整个目录
+        同步整个目录（支持多线程）
         
         Args:
             recursive: 是否递归同步子目录
             verify_md5: 是否进行 MD5 校验
             overwrite_existing: 是否覆盖已存在的文件
+            thread_count: 线程数（1=单线程，>1=多线程）
             log_callback: 日志回调函数
             
         Returns:
@@ -283,40 +330,60 @@ class FileSyncer:
             "success": 0,
             "skipped_ignored": 0,
             "skipped_active": 0,
-            "skipped_exists": 0,
+            "skipped_unchanged": 0,
             "failed": 0,
             "total": 0
         }
         
         if log_callback:
             log_callback(f"开始同步目录: {self.source_dir} -> {self.target_dir}")
+            if thread_count > 1:
+                log_callback(f"多线程模式: {thread_count} 个线程")
         
-        # 遍历源目录
+        # 收集所有需要同步的文件
         pattern = "**/*" if recursive else "*"
+        file_tasks = []
         for source_file in self.source_dir.glob(pattern):
             if not source_file.is_file():
                 continue
             
             stats["total"] += 1
-            
-            # 计算相对路径
             relative_path = source_file.relative_to(self.source_dir)
             target_file = self.target_dir / relative_path
-            
-            # 同步文件
-            result = self.sync_file(source_file, target_file, verify_md5, overwrite_existing, log_callback)
-            
-            # 更新统计
-            if result == "Success":
-                stats["success"] += 1
-            elif result == "Skipped (Ignored)":
-                stats["skipped_ignored"] += 1
-            elif result == "Skipped (Active)":
-                stats["skipped_active"] += 1
-            elif result == "Skipped (Exists)":
-                stats["skipped_exists"] += 1
-            elif result == "Failed":
-                stats["failed"] += 1
+            file_tasks.append((source_file, target_file))
+        
+        # 单线程模式
+        if thread_count == 1:
+            for source_file, target_file in file_tasks:
+                result = self.sync_file(source_file, target_file, verify_md5, overwrite_existing, log_callback)
+                self._update_stats(stats, result)
+        
+        # 多线程模式
+        else:
+            with ThreadPoolExecutor(max_workers=thread_count) as executor:
+                # 提交所有任务
+                future_to_file = {
+                    executor.submit(
+                        self.sync_file,
+                        source_file,
+                        target_file,
+                        verify_md5,
+                        overwrite_existing,
+                        log_callback
+                    ): (source_file, target_file)
+                    for source_file, target_file in file_tasks
+                }
+                
+                # 等待并处理结果
+                for future in as_completed(future_to_file):
+                    try:
+                        result = future.result()
+                        self._update_stats(stats, result)
+                    except Exception as e:
+                        source_file, target_file = future_to_file[future]
+                        if log_callback:
+                            log_callback(f"线程处理失败: {source_file.name} - {str(e)}")
+                        stats["failed"] += 1
         
         if log_callback:
             log_callback(
@@ -325,11 +392,31 @@ class FileSyncer:
                 f"\n  成功: {stats['success']}"
                 f"\n  跳过(垃圾): {stats['skipped_ignored']}"
                 f"\n  跳过(活动): {stats['skipped_active']}"
-                f"\n  跳过(已存在): {stats['skipped_exists']}"
+                f"\n  跳过(未变更): {stats['skipped_unchanged']}"
                 f"\n  失败: {stats['failed']}"
             )
         
         return stats
+    
+    @staticmethod
+    def _update_stats(stats: dict, result: str):
+        """
+        更新同步统计信息
+        
+        Args:
+            stats: 统计字典
+            result: 同步结果
+        """
+        if result == "Success":
+            stats["success"] += 1
+        elif result == "Skipped (Ignored)":
+            stats["skipped_ignored"] += 1
+        elif result == "Skipped (Active)":
+            stats["skipped_active"] += 1
+        elif result == "Skipped (Unchanged)":
+            stats["skipped_unchanged"] += 1
+        elif result == "Failed":
+            stats["failed"] += 1
     
     @staticmethod
     def _format_size(size_bytes: int) -> str:

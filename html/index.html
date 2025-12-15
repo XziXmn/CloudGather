@@ -336,6 +336,18 @@
                             <div class="progress-bar"><div id="memory-progress" class="progress-fill" style="width: 0%"></div></div>
                             <p class="text-sm text-gray-500 mt-2">使用率: <span id="memory-percent" class="font-semibold">0%</span></p>
                         </div>
+                        <div class="card">
+                            <div class="flex items-center gap-2 mb-3"><i class="fas fa-hdd text-purple-500"></i><h3 class="font-bold">磁盘使用</h3></div>
+                            <div class="flex items-center justify-between mb-2"><span class="text-sm text-gray-500">已用 / 总计</span><span id="disk-text" class="text-lg font-bold">0 GB / 0 GB</span></div>
+                            <div class="progress-bar"><div id="disk-progress" class="progress-fill" style="width: 0%"></div></div>
+                            <p class="text-sm text-gray-500 mt-2">使用率: <span id="disk-percent" class="font-semibold">0%</span></p>
+                        </div>
+                        <div class="card">
+                            <div class="flex items-center gap-2 mb-3"><i class="fas fa-history text-green-500"></i><h3 class="font-bold">最近执行</h3></div>
+                            <div id="recent-tasks" class="space-y-1 text-sm">
+                                <p class="text-gray-500">暂无最近执行记录</p>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
@@ -495,6 +507,22 @@
                                 </label>
                             </label>
                         </div>
+                    </div>
+                    
+                    <!-- 线程数配置 -->
+                    <div class="md:col-span-2">
+                        <label class="block text-sm text-gray-600 mb-2">
+                            同步线程数 <span class="text-xs text-gray-400">(本地存储可多线程，网络存储建议单线程)</span>
+                        </label>
+                        <select id="taskThreadCount" class="w-full md:w-64 px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                            <option value="1" selected>1 个线程 (单线程)</option>
+                            <option value="2">2 个线程</option>
+                            <option value="4">4 个线程</option>
+                            <option value="8">8 个线程</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-2">
+                            <i class="fas fa-info-circle"></i> 提示：本地存储可启用多线程加速，网络存储(如网盘挂载)建议使用单线程
+                        </p>
                     </div>
                     
                     <!-- Cron 调度配置 -->

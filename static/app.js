@@ -1,4 +1,4 @@
-// CloudGather v0.3.7 - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度 + 一言
+// CloudGather - 蓝粉白纯色 + 独立日志窗 + MD侧边栏 + Cron 调度 + 一言
 let currentEditingTaskId = null;
 let lastTasksData = null;
 let tasksCache = [];
@@ -117,10 +117,35 @@ async function loadSystemStatus() {
             document.getElementById('memory-text').textContent = `${memUsed} / ${memTotal}`;
             document.getElementById('memory-percent').textContent = memPercent + '%';
             document.getElementById('memory-progress').style.width = memPercent + '%';
+            
+            // 磁盘信息
+            if (data.system.disk_total) {
+                const diskPercent = Math.round(data.system.disk_percent);
+                const diskUsed = formatBytes(data.system.disk_used);
+                const diskTotal = formatBytes(data.system.disk_total);
+                document.getElementById('disk-text').textContent = `${diskUsed} / ${diskTotal}`;
+                document.getElementById('disk-percent').textContent = diskPercent + '%';
+                document.getElementById('disk-progress').style.width = diskPercent + '%';
+            }
         }
+        
+        // 最近执行任务
+        if (data.recent_tasks && data.recent_tasks.length > 0) {
+            const recentHtml = data.recent_tasks.map(t => {
+                const time = t.last_run_time ? new Date(t.last_run_time).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}) : '-';
+                return `<div class="flex items-center justify-between py-1 border-b border-gray-100 dark:border-gray-700 last:border-0">
+                    <span class="truncate flex-1" title="${t.name}">${t.name}</span>
+                    <span class="text-xs text-gray-500 ml-2">${time}</span>
+                </div>`;
+            }).join('');
+            document.getElementById('recent-tasks').innerHTML = recentHtml;
+        } else {
+            document.getElementById('recent-tasks').innerHTML = '<p class="text-gray-500">暂无最近执行记录</p>';
+        }
+        
         document.getElementById('config-path').textContent = data.config_path;
         document.getElementById('is-docker').textContent = data.is_docker ? 'Docker' : '本地';
-        document.getElementById('app-version').textContent = 'v' + (data.version || '0.3.7');  // 显示版本号
+        document.getElementById('app-version').textContent = 'v' + (data.version || 'Unknown');  // 显示版本号
     } catch (error) {
         console.error('加载系统状态失败:', error);
     }
@@ -389,7 +414,8 @@ function saveDraft() {
         interval: parseInt(document.getElementById('taskInterval').value) || 300,
         recursive: document.getElementById('taskRecursive').checked,
         verify_md5: document.getElementById('taskMd5').checked,
-        overwrite_existing: document.getElementById('taskOverwrite').checked
+        overwrite_existing: document.getElementById('taskOverwrite').checked,
+        thread_count: parseInt(document.getElementById('taskThreadCount').value) || 1
     };
     localStorage.setItem('task-draft', JSON.stringify(draft));
 }
@@ -481,7 +507,8 @@ async function editTask(taskId) {
         document.getElementById('taskSkip').checked = !overwrite;
         document.getElementById('taskOverwrite').checked = overwrite;
         
-        document.getElementById('taskEnabled').checked = task.enabled;
+        // 线程数
+        document.getElementById('taskThreadCount').value = task.thread_count || 1;
         
         // 填充 Cron 表达式
         document.getElementById('cronExpression').value = task.cron_expression || '';
@@ -507,6 +534,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         recursive: document.getElementById('taskRecursive').checked,
         verify_md5: document.getElementById('taskMd5').checked,
         overwrite_existing: document.getElementById('taskOverwrite').checked,
+        thread_count: parseInt(document.getElementById('taskThreadCount').value) || 1,
         enabled: true  // 默认启用，后续可通过开关控制
     };
     
@@ -541,7 +569,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskRecursive', 'taskMd5', 'taskSkip', 'taskOverwrite'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskRecursive', 'taskMd5', 'taskSkip', 'taskOverwrite', 'taskThreadCount'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {

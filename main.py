@@ -12,14 +12,16 @@ import logging
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional
+from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
 from core.scheduler import TaskScheduler
 from core.models import SyncTask
+from version import __version__
 
 # 版本信息
-VERSION = "0.3.8"
+VERSION = __version__
 
 # 配置日志格式
 logging.basicConfig(
@@ -119,11 +121,66 @@ def _parse_bool(value, default=False):
     return default
 
 
+def _validate_paths_for_request(source_path: str, target_path: str):
+    """校验源/目标路径可用性，并在需要时创建目标目录"""
+    source = Path(source_path)
+    target = Path(target_path)
+    
+    if not source.exists():
+        return False, f"源目录不存在: {source}"
+    if not source.is_dir():
+        return False, f"源路径不是目录: {source}"
+    if not os.access(source, os.R_OK):
+        return False, f"没有读取源目录的权限: {source}"
+    
+    try:
+        if not target.exists():
+            target.mkdir(parents=True, exist_ok=True)
+        if not target.is_dir():
+            return False, f"目标路径不是目录: {target}"
+        if not os.access(target, os.W_OK):
+            return False, f"没有写入目标目录的权限: {target}"
+    except PermissionError as e:
+        return False, f"无法创建/访问目标目录: {e}"
+    except Exception as e:
+        return False, f"目标目录检查失败: {e}"
+    
+    return True, None
+
+
 @app.route('/api/status', methods=['GET'])
 def api_status():
     # 获取系统资源信息
     memory = psutil.virtual_memory()
     cpu_percent = psutil.cpu_percent(interval=0.1)
+    disk_usage = psutil.disk_usage('/')
+    
+    # 统计任务状态
+    task_stats = {
+        'total': len(scheduler.tasks),
+        'enabled': sum(1 for t in scheduler.tasks.values() if t.enabled),
+        'disabled': sum(1 for t in scheduler.tasks.values() if not t.enabled),
+        'idle': sum(1 for t in scheduler.tasks.values() if t.status.value == 'IDLE'),
+        'running': sum(1 for t in scheduler.tasks.values() if t.status.value == 'RUNNING'),
+        'queued': sum(1 for t in scheduler.tasks.values() if t.status.value == 'QUEUED'),
+        'error': sum(1 for t in scheduler.tasks.values() if t.status.value == 'ERROR')
+    }
+    
+    # 获取最近执行任务
+    recent_tasks = sorted(
+        [t for t in scheduler.tasks.values() if t.last_run_time],
+        key=lambda x: x.last_run_time or '',
+        reverse=True
+    )[:5]
+    
+    # 配置文件信息
+    config_stat = None
+    if Path(CONFIG_PATH).exists():
+        stat = Path(CONFIG_PATH).stat()
+        config_stat = {
+            'size': stat.st_size,
+            'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+        }
     
     return jsonify({
         'running': scheduler.is_running,
@@ -132,6 +189,29 @@ def api_status():
         'config_path': str(CONFIG_PATH),
         'is_docker': IS_DOCKER,
         'version': VERSION,
+        
+        # 配置健康状态
+        'config_health': {
+            'exists': Path(CONFIG_PATH).exists(),
+            'dir_exists': Path(CONFIG_PATH).parent.exists(),
+            'dir_writable': os.access(Path(CONFIG_PATH).parent, os.W_OK),
+            'file_writable': os.access(Path(CONFIG_PATH), os.W_OK) if Path(CONFIG_PATH).exists() else None,
+            'file_stat': config_stat
+        },
+        
+        # 任务统计
+        'task_stats': task_stats,
+        
+        # 最近执行的任务
+        'recent_tasks': [
+            {
+                'id': t.id,
+                'name': t.name,
+                'last_run_time': t.last_run_time,
+                'status': t.status.value
+            } for t in recent_tasks
+        ],
+        
         # 系统资源
         'system': {
             'cpu_percent': cpu_percent,
@@ -139,6 +219,10 @@ def api_status():
             'memory_used': memory.used,
             'memory_percent': memory.percent,
             'memory_available': memory.available,
+            'disk_total': disk_usage.total,
+            'disk_used': disk_usage.used,
+            'disk_free': disk_usage.free,
+            'disk_percent': disk_usage.percent
         }
     })
 
@@ -154,6 +238,12 @@ def api_tasks():
     missing = [f for f in required_fields if f not in data]
     if missing:
         return jsonify({'success': False, 'error': f"缺少字段: {', '.join(missing)}"}), 400
+
+    source_path = data['source_path']
+    target_path = data['target_path']
+    ok, err = _validate_paths_for_request(source_path, target_path)
+    if not ok:
+        return jsonify({'success': False, 'error': err}), 400
 
     # 获取调度类型
     schedule_type = data.get('schedule_type', 'INTERVAL')
@@ -171,15 +261,16 @@ def api_tasks():
         
         task = SyncTask(
             name=data['name'],
-            source_path=data['source_path'],
-            target_path=data['target_path'],
+            source_path=source_path,
+            target_path=target_path,
             schedule_type='CRON',
             cron_expression=cron_expression,
             interval=300,  # cron 模式下 interval 不使用，但需要默认值
             recursive=_parse_bool(data.get('recursive', True), True),
             verify_md5=_parse_bool(data.get('verify_md5', False), False),
             enabled=_parse_bool(data.get('enabled', True), True),
-            overwrite_existing=_parse_bool(data.get('overwrite_existing', False), False)
+            overwrite_existing=_parse_bool(data.get('overwrite_existing', False), False),
+            thread_count=int(data.get('thread_count', 1))
         )
     else:
         # 间隔调度
@@ -193,14 +284,15 @@ def api_tasks():
 
         task = SyncTask(
             name=data['name'],
-            source_path=data['source_path'],
-            target_path=data['target_path'],
+            source_path=source_path,
+            target_path=target_path,
             schedule_type='INTERVAL',
             interval=interval,
             recursive=_parse_bool(data.get('recursive', True), True),
             verify_md5=_parse_bool(data.get('verify_md5', False), False),
             enabled=_parse_bool(data.get('enabled', True), True),
-            overwrite_existing=_parse_bool(data.get('overwrite_existing', False), False)
+            overwrite_existing=_parse_bool(data.get('overwrite_existing', False), False),
+            thread_count=int(data.get('thread_count', 1))
         )
 
     if scheduler.add_task(task):
@@ -241,6 +333,19 @@ def api_task_detail(task_id: str):
         updates['enabled'] = _parse_bool(data['enabled'], task.enabled)
     if 'overwrite_existing' in data:
         updates['overwrite_existing'] = _parse_bool(data['overwrite_existing'], task.overwrite_existing)
+    if 'thread_count' in data:
+        try:
+            updates['thread_count'] = max(1, int(data['thread_count']))
+        except ValueError:
+            return jsonify({'success': False, 'error': '线程数必须是数字'}), 400
+
+    # 路径更新时校验并创建目标目录
+    if 'source_path' in updates or 'target_path' in updates:
+        new_source = updates.get('source_path', task.source_path)
+        new_target = updates.get('target_path', task.target_path)
+        ok, err = _validate_paths_for_request(new_source, new_target)
+        if not ok:
+            return jsonify({'success': False, 'error': err}), 400
 
     if 'interval' in updates and updates['interval'] is not None and updates['interval'] < 5:
         return jsonify({'success': False, 'error': '同步间隔需大于等于 5 秒'}), 400

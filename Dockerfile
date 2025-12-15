@@ -1,9 +1,5 @@
 FROM python:3.11-slim
 
-# 设置版本号
-ARG VERSION=0.3.8
-ENV APP_VERSION=${VERSION}
-
 # 设置工作目录
 WORKDIR /app
 
@@ -24,6 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY core/ ./core/
 COPY html/ ./html/
 COPY static/ ./static/
+COPY version.py .
 COPY main.py .
 COPY entrypoint.sh /entrypoint.sh
 

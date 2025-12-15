@@ -1,9 +1,12 @@
 #!/bin/bash
 set -e
 
+# 从 version.py 读取版本号
+VERSION=$(python -c "from version import __version__; print(__version__)" 2>/dev/null || echo "0.3.8")
+
 # 显示版本信息
 echo "=========================================="
-echo "  CloudGather (云集) v${APP_VERSION:-0.3.8}"
+echo "  CloudGather (云集) v${VERSION}"
 echo "  媒体文件同步工具"
 echo "=========================================="
 echo ""

@@ -7,6 +7,7 @@ import json
 import queue
 import threading
 import time
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
 from datetime import datetime
@@ -46,6 +47,9 @@ class TaskScheduler:
         except Exception as e:
             print(f"⚠️ 创建配置目录失败: {e}")
         
+        # 确保配置文件存在，避免宿主机挂载目录未生成文件
+        self._ensure_config_file()
+        
         # 加载已保存的任务
         self.load_tasks()
     
@@ -76,6 +80,61 @@ class TaskScheduler:
         """
         if self.log_callback:
             self.log_callback(message)
+    
+    def _ensure_config_file(self):
+        """确保配置文件存在，若缺失则创建空文件"""
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            if not self.config_path.exists():
+                data = {
+                    "tasks": [],
+                    "last_saved": datetime.now().isoformat()
+                }
+                self.config_path.write_text(
+                    json.dumps(data, indent=2, ensure_ascii=False),
+                    encoding='utf-8'
+                )
+        except Exception as e:
+            # 使用 print 保证启动阶段也能看到
+            print(f"⚠️ 无法创建配置文件 {self.config_path}: {e}")
+            if self.log_callback:
+                self.log_callback(f"⚠️ 无法创建配置文件: {self.config_path} - {e}")
+    
+    def _validate_task_paths(self, task: SyncTask) -> bool:
+        """检查任务的源/目标目录可用性，并在需要时创建目标目录"""
+        try:
+            source = Path(task.source_path)
+            target = Path(task.target_path)
+            
+            if not source.exists():
+                self._log(f"✗ 源目录不存在: {source}")
+                return False
+            if not source.is_dir():
+                self._log(f"✗ 源路径不是目录: {source}")
+                return False
+            if not os.access(source, os.R_OK):
+                self._log(f"✗ 没有读取源目录的权限: {source}")
+                return False
+            
+            if not target.exists():
+                target.mkdir(parents=True, exist_ok=True)
+                self._log(f"📁 已创建目标目录: {target}")
+            if not target.is_dir():
+                self._log(f"✗ 目标路径不是目录: {target}")
+                return False
+            if not os.access(target, os.W_OK):
+                self._log(f"✗ 没有写入目标目录的权限: {target}")
+                return False
+            
+            return True
+        except PermissionError as e:
+            self._log(f"✗ 目录权限不足: {e}")
+            return False
+        except Exception as e:
+            self._log(f"✗ 目录检查失败: {e}")
+            import traceback
+            self._log(f"错误详情: {traceback.format_exc()}")
+            return False
     
     def add_task(self, task: SyncTask) -> bool:
         """
@@ -308,6 +367,16 @@ class TaskScheduler:
                 task.update_status(TaskStatus.RUNNING)
                 self._log(f"▶ 开始执行任务: {task.name}")
                 
+                # 运行前校验路径，并在目标缺失时尝试创建
+                if not self._validate_task_paths(task):
+                    task.update_status(TaskStatus.ERROR)
+                    self._log(f"✗ 路径检查失败，任务终止: {task.name}")
+                    if self.task_context_callback:
+                        self.task_context_callback(None)
+                    self.task_queue.task_done()
+                    self.save_tasks()
+                    continue
+                
                 # 执行同步
                 try:
                     syncer = FileSyncer(
@@ -319,6 +388,7 @@ class TaskScheduler:
                         recursive=task.recursive,
                         verify_md5=task.verify_md5,
                         overwrite_existing=task.overwrite_existing,
+                        thread_count=task.thread_count,
                         log_callback=self._log
                     )
                     
@@ -336,6 +406,8 @@ class TaskScheduler:
                     # 更新状态为 ERROR
                     task.update_status(TaskStatus.ERROR)
                     self._log(f"✗ 任务执行失败: {task.name} - {str(e)}")
+                    import traceback
+                    self._log(f"错误详情: {traceback.format_exc()}")
                 
                 finally:
                     # 清除任务上下文
@@ -350,6 +422,8 @@ class TaskScheduler:
                 
             except Exception as e:
                 self._log(f"消费者线程异常: {str(e)}")
+                import traceback
+                self._log(f"错误详情: {traceback.format_exc()}")
                 time.sleep(1)
         
         self._log("📌 任务消费者线程已停止")

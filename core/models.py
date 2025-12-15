@@ -39,7 +39,8 @@ class SyncTask:
         enabled: bool = True,
         verify_md5: bool = False,
         recursive: bool = True,
-        overwrite_existing: bool = False  # 是否覆盖已存在的文件，默认跳过
+        overwrite_existing: bool = False,  # 是否覆盖已存在的文件，默认跳过
+        thread_count: int = 1  # 同步线程数，默认1（单线程）
     ):
         """
         初始化同步任务
@@ -58,6 +59,7 @@ class SyncTask:
             verify_md5: 是否进行MD5校验
             recursive: 是否递归同步子目录
             overwrite_existing: 是否覆盖已存在的文件（True=覆盖，False=跳过）
+            thread_count: 同步线程数（1=单线程，>1=多线程）
         """
         self.id = task_id if task_id else str(uuid.uuid4())
         self.name = name
@@ -72,6 +74,7 @@ class SyncTask:
         self.verify_md5 = verify_md5
         self.recursive = recursive
         self.overwrite_existing = overwrite_existing
+        self.thread_count = max(1, thread_count)  # 确保至少1个线程
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -93,7 +96,8 @@ class SyncTask:
             "enabled": self.enabled,
             "verify_md5": self.verify_md5,
             "recursive": self.recursive,
-            "overwrite_existing": self.overwrite_existing
+            "overwrite_existing": self.overwrite_existing,
+            "thread_count": self.thread_count
         }
     
     @classmethod
@@ -120,7 +124,8 @@ class SyncTask:
             enabled=data.get("enabled", True),
             verify_md5=data.get("verify_md5", False),
             recursive=data.get("recursive", True),
-            overwrite_existing=data.get("overwrite_existing", False)
+            overwrite_existing=data.get("overwrite_existing", False),
+            thread_count=data.get("thread_count", 1)
         )
     
     def update_status(self, new_status: TaskStatus):
