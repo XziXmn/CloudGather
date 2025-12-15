@@ -217,7 +217,7 @@ function renderTasks(tasks) {
         // 根据调度类型显示不同信息
         let scheduleInfo = '';
         if (task.schedule_type === 'CRON') {
-            scheduleInfo = `<div class="flex items-center"><i class="fas fa-calendar-alt text-purple-500 mr-2"></i><span>Cron: <code class="px-2 py-1 bg-gray-100 rounded text-xs font-mono">${task.cron_expression}</code></span></div>`;
+            scheduleInfo = `<div class="flex items-center"><i class="fas fa-calendar-alt text-purple-500 mr-2"></i><code class="px-2 py-1 bg-gray-100 rounded text-xs font-mono">${task.cron_expression}</code></div>`;
         } else {
             scheduleInfo = `<div class="flex items-center"><i class="fas fa-clock text-yellow-500 mr-2"></i><span>间隔：${formatInterval(task.interval)}</span></div>`;
         }
@@ -229,7 +229,6 @@ function renderTasks(tasks) {
                     <div class="flex items-center gap-3 mb-1">
                         <h4 class="text-lg font-bold">${task.name}</h4>
                         <span class="status-badge-container">${getStatusBadge(task.status)}</span>
-                        ${task.schedule_type === 'CRON' ? '<span class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded"><i class="fas fa-calendar-alt mr-1"></i>Cron</span>' : '<span class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded"><i class="fas fa-clock mr-1"></i>间隔</span>'}
                     </div>
                 </div>
                 <div class="flex items-center gap-2" title="${task.enabled ? '任务已启用' : '任务已禁用'}">
@@ -240,19 +239,21 @@ function renderTasks(tasks) {
                     </label>
                 </div>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
-                <div class="flex items-center"><i class="fas fa-folder-open text-blue-500 mr-2"></i><span class="font-mono">${task.source_path}</span></div>
-                <div class="flex items-center"><i class="fas fa-folder text-green-500 mr-2"></i><span class="font-mono">${task.target_path}</span></div>
-                ${scheduleInfo}
-                <div class="flex items-center gap-2">
-                    ${task.recursive ? '<span class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded"><i class="fas fa-code-branch mr-1"></i>递归</span>' : ''}
-                    ${task.verify_md5 ? '<span class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded"><i class="fas fa-shield-alt mr-1"></i>MD5</span>' : ''}
-                    ${task.last_run_time ? `<span class="text-xs text-gray-500"><i class="fas fa-history mr-1"></i>${new Date(task.last_run_time).toLocaleString()}</span>` : ''}
+            <div class="mb-3">
+                <div class="flex items-center text-sm text-gray-600">
+                    <div class="flex items-center"><i class="fas fa-folder-open text-blue-500 mr-2"></i><span class="font-mono">${task.source_path}</span></div>
+                    <span class="mx-1 text-gray-400">→</span>
+                    <div class="flex items-center"><i class="fas fa-folder text-green-500 mr-2"></i><span class="font-mono">${task.target_path}</span></div>
                 </div>
+            </div>
+            <div class="flex items-center gap-4 text-sm text-gray-600 mb-3">
+                ${scheduleInfo}
+                ${task.last_run_time ? `<span class="text-xs text-gray-500"><i class="fas fa-history mr-1"></i>${new Date(task.last_run_time).toLocaleString()}</span>` : ''}
             </div>
             <div class="flex gap-2 flex-wrap mt-3">
                 <button onclick="triggerTask('${task.id}')" class="btn btn-primary text-sm" ${task.status !== 'IDLE' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''}><i class="fas fa-play"></i>立即运行</button>
                 <button onclick="openLogWindow('${task.id}', '${task.name.replace(/'/g, "''")} 日志')" class="btn btn-secondary text-sm"><i class="fas fa-terminal"></i>查看日志</button>
+                <button onclick="showAdvancedTools('${task.id}')" class="btn btn-secondary text-sm"><i class="fas fa-wrench"></i>高级工具</button>
                 <button onclick="editTask('${task.id}')" class="btn btn-secondary text-sm"><i class="fas fa-edit"></i>编辑</button>
                 <button onclick="deleteTask('${task.id}', '${task.name.replace(/'/g, "''")}')" class="btn btn-secondary text-sm border-red-500 text-red-500"><i class="fas fa-trash"></i>删除</button>
             </div>
@@ -374,9 +375,17 @@ function showAddTaskModal() {
     document.getElementById('modalTitle').textContent = '添加任务';
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
-    document.getElementById('taskRecursive').checked = true;
-    document.getElementById('taskSkip').checked = true;  // 默认跳过已存在文件
-    document.getElementById('taskOverwrite').checked = false;
+    
+    // 重置子规则按钮状态（默认全部未启用）
+    ['ruleNotExists', 'ruleSizeDiff', 'ruleMtimeNewer'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            btn.dataset.active = 'false';
+            btn.style.borderColor = '#e5e9f2';
+            btn.style.background = 'transparent';
+            btn.style.color = '#6b7280';
+        }
+    });
     
     document.getElementById('taskModal').classList.add('show');
     
@@ -391,14 +400,25 @@ function loadDraft() {
             document.getElementById('taskName').value = draft.name || '';
             document.getElementById('taskSource').value = draft.source_path || '';
             document.getElementById('taskTarget').value = draft.target_path || '';
-            document.getElementById('taskInterval').value = draft.interval || 300;
-            document.getElementById('taskRecursive').checked = draft.recursive !== false;
-            document.getElementById('taskMd5').checked = draft.verify_md5 || false;
+            document.getElementById('cronExpression').value = draft.cron_expression || '';
+            document.getElementById('taskThreadCount').value = draft.thread_count || 1;
             
-            // 处理互斥逻辑
-            const overwrite = draft.overwrite_existing || false;
-            document.getElementById('taskSkip').checked = !overwrite;
-            document.getElementById('taskOverwrite').checked = overwrite;
+            // 恢复子规则状态
+            const rules = {
+                ruleNotExists: draft.rule_not_exists || false,
+                ruleSizeDiff: draft.rule_size_diff || false,
+                ruleMtimeNewer: draft.rule_mtime_newer || false
+            };
+            
+            Object.keys(rules).forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn && rules[id]) {
+                    btn.dataset.active = 'true';
+                    btn.style.borderColor = '#5b8bff';
+                    btn.style.background = '#e9efff';
+                    btn.style.color = '#3f70e8';
+                }
+            });
         }
     } catch (e) {
         console.error('加载草稿失败:', e);
@@ -411,11 +431,11 @@ function saveDraft() {
         name: document.getElementById('taskName').value,
         source_path: document.getElementById('taskSource').value,
         target_path: document.getElementById('taskTarget').value,
-        interval: parseInt(document.getElementById('taskInterval').value) || 300,
-        recursive: document.getElementById('taskRecursive').checked,
-        verify_md5: document.getElementById('taskMd5').checked,
-        overwrite_existing: document.getElementById('taskOverwrite').checked,
-        thread_count: parseInt(document.getElementById('taskThreadCount').value) || 1
+        cron_expression: document.getElementById('cronExpression').value,
+        thread_count: parseInt(document.getElementById('taskThreadCount').value) || 1,
+        rule_not_exists: document.getElementById('ruleNotExists').dataset.active === 'true',
+        rule_size_diff: document.getElementById('ruleSizeDiff').dataset.active === 'true',
+        rule_mtime_newer: document.getElementById('ruleMtimeNewer').dataset.active === 'true'
     };
     localStorage.setItem('task-draft', JSON.stringify(draft));
 }
@@ -434,30 +454,28 @@ function closeTaskModal() {
     removeDirectoryAutocomplete();
 }
 
-// 处理同步模式互斥逻辑
-function handleSyncModeChange(mode) {
-    const skipCheckbox = document.getElementById('taskSkip');
-    const overwriteCheckbox = document.getElementById('taskOverwrite');
+// 切换子规则按钮状态
+function toggleRule(button, ruleKey) {
+    const isActive = button.dataset.active === 'true';
     
-    if (mode === 'skip' && skipCheckbox.checked) {
-        // 开启跳过，关闭覆盖
-        overwriteCheckbox.checked = false;
-    } else if (mode === 'overwrite' && overwriteCheckbox.checked) {
-        // 开启覆盖，关闭跳过
-        skipCheckbox.checked = false;
-    }
-    
-    // 确保至少有一个被选中
-    if (!skipCheckbox.checked && !overwriteCheckbox.checked) {
-        if (mode === 'skip') {
-            overwriteCheckbox.checked = true;
-        } else {
-            skipCheckbox.checked = true;
-        }
+    if (isActive) {
+        // 关闭
+        button.dataset.active = 'false';
+        button.style.borderColor = '#e5e9f2';
+        button.style.background = 'transparent';
+        button.style.color = '#6b7280';
+    } else {
+        // 启用
+        button.dataset.active = 'true';
+        button.style.borderColor = '#5b8bff';
+        button.style.background = '#e9efff';
+        button.style.color = '#3f70e8';
     }
     
     taskFormDirty = true;
 }
+
+
 
 // 加载一言（自动调用）
 async function loadHitokoto() {
@@ -499,13 +517,30 @@ async function editTask(taskId) {
         document.getElementById('taskName').value = task.name;
         document.getElementById('taskSource').value = task.source_path;
         document.getElementById('taskTarget').value = task.target_path;
-        document.getElementById('taskRecursive').checked = task.recursive;
-        document.getElementById('taskMd5').checked = task.verify_md5;
         
-        // 处理互斥逻辑
-        const overwrite = task.overwrite_existing || false;
-        document.getElementById('taskSkip').checked = !overwrite;
-        document.getElementById('taskOverwrite').checked = overwrite;
+        // 设置子规则按钮状态
+        const rules = {
+            ruleNotExists: task.rule_not_exists || false,
+            ruleSizeDiff: task.rule_size_diff || false,
+            ruleMtimeNewer: task.rule_mtime_newer || false
+        };
+        
+        Object.keys(rules).forEach(id => {
+            const btn = document.getElementById(id);
+            if (btn) {
+                if (rules[id]) {
+                    btn.dataset.active = 'true';
+                    btn.style.borderColor = '#5b8bff';
+                    btn.style.background = '#e9efff';
+                    btn.style.color = '#3f70e8';
+                } else {
+                    btn.dataset.active = 'false';
+                    btn.style.borderColor = '#e5e9f2';
+                    btn.style.background = 'transparent';
+                    btn.style.color = '#6b7280';
+                }
+            }
+        });
         
         // 线程数
         document.getElementById('taskThreadCount').value = task.thread_count || 1;
@@ -531,10 +566,10 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         target_path: document.getElementById('taskTarget').value,
         schedule_type: 'CRON',  // 只支持 Cron 模式
         cron_expression: document.getElementById('cronExpression').value.trim(),
-        recursive: document.getElementById('taskRecursive').checked,
-        verify_md5: document.getElementById('taskMd5').checked,
-        overwrite_existing: document.getElementById('taskOverwrite').checked,
         thread_count: parseInt(document.getElementById('taskThreadCount').value) || 1,
+        rule_not_exists: document.getElementById('ruleNotExists').dataset.active === 'true',
+        rule_size_diff: document.getElementById('ruleSizeDiff').dataset.active === 'true',
+        rule_mtime_newer: document.getElementById('ruleMtimeNewer').dataset.active === 'true',
         enabled: true  // 默认启用，后续可通过开关控制
     };
     
@@ -569,7 +604,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskRecursive', 'taskMd5', 'taskSkip', 'taskOverwrite', 'taskThreadCount'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskThreadCount'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -922,6 +957,106 @@ async function generateRandomCron() {
         taskFormDirty = true;
     } catch (error) {
         showNotification('生成失败', 'error');
+    }
+}
+
+// 高级工具功能
+function showAdvancedTools(taskId) {
+    const task = tasksCache.find(t => t.id === taskId);
+    if (!task) {
+        showNotification('任务不存在', 'error');
+        return;
+    }
+    
+    // 创建高级工具弹窗
+    const modal = document.createElement('div');
+    modal.className = 'overlay-modal show';
+    modal.id = 'advancedToolsModal';
+    modal.innerHTML = `
+        <div class="modal-card card" onclick="event.stopPropagation()">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-wrench text-blue-500 text-xl"></i>
+                    <h3 class="text-xl font-bold">高级工具</h3>
+                </div>
+                <button class="btn btn-secondary text-sm" onclick="closeAdvancedTools()"><i class="fas fa-times"></i>关闭</button>
+            </div>
+            <div class="mb-4">
+                <p class="text-sm text-gray-600 mb-2">任务: <span class="font-bold">${task.name}</span></p>
+                <p class="text-xs text-gray-500">${task.source_path} → ${task.target_path}</p>
+            </div>
+            <div class="space-y-3">
+                <div class="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors">
+                    <div class="flex items-start gap-3">
+                        <i class="fas fa-sync-alt text-orange-500 text-2xl mt-1"></i>
+                        <div class="flex-1">
+                            <h4 class="font-bold text-lg mb-1">全量覆盖更新</h4>
+                            <p class="text-sm text-gray-600 mb-3">强制覆盖所有已存在的同名文件，不删除目标多余文件。此操作不会修改任务的持久配置。</p>
+                            <button onclick="triggerFullOverwrite('${taskId}')" class="btn btn-primary text-sm" ${task.status !== 'IDLE' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''}>
+                                <i class="fas fa-bolt"></i>立即执行
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                    <div class="flex items-start gap-2">
+                        <i class="fas fa-exclamation-triangle text-yellow-600 mt-0.5"></i>
+                        <p class="text-xs text-yellow-700">
+                            <strong>注意：</strong>全量覆盖会替换所有已存在文件，请确保源文件完整且正确。此操作仅执行一次，不影响定时任务的同步策略。
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeAdvancedTools();
+    });
+}
+
+function closeAdvancedTools() {
+    const modal = document.getElementById('advancedToolsModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function triggerFullOverwrite(taskId) {
+    const task = tasksCache.find(t => t.id === taskId);
+    if (!task) {
+        showNotification('任务不存在', 'error');
+        return;
+    }
+    
+    // 二次确认
+    if (!confirm(`确认对任务「${task.name}」执行全量覆盖吗？\n\n此操作将强制覆盖所有已存在的同名文件！`)) {
+        return;
+    }
+    
+    try {
+        // 发送全量覆盖请求
+        const response = await fetch(`/api/tasks/${taskId}/full-overwrite`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('全量覆盖任务已加入队列', 'success');
+            closeAdvancedTools();
+            // 打开日志窗口
+            setTimeout(() => {
+                openLogWindow(taskId, task.name + ' 日志');
+            }, 500);
+        } else {
+            showNotification(result.error || '执行失败', 'error');
+        }
+    } catch (error) {
+        console.error('全量覆盖失败:', error);
+        showNotification('执行失败', 'error');
     }
 }
 

@@ -5,7 +5,6 @@ NAS 文件同步核心模块
 
 import os
 import time
-import hashlib
 import shutil
 from pathlib import Path
 from typing import Callable, Optional, Tuple
@@ -119,69 +118,58 @@ class FileSyncer:
                 log_callback(f"稳定性检查失败: {file_path.name} - {str(e)}")
             return False, 0
     
-    def calculate_md5(
-        self, 
-        file_path: Path, 
-        log_callback: Optional[Callable[[str], None]] = None
-    ) -> str:
-        """
-        计算文件 MD5 值
-        
-        Args:
-            file_path: 文件路径
-            log_callback: 日志回调函数
-            
-        Returns:
-            MD5 哈希值（十六进制字符串）
-        """
-        md5_hash = hashlib.md5()
-        file_size = file_path.stat().st_size
-        bytes_read = 0
-        
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(8192), b''):
-                md5_hash.update(chunk)
-                bytes_read += len(chunk)
-                
-                # 每读取 10MB 报告一次进度
-                if log_callback and bytes_read % (10 * 1024 * 1024) == 0:
-                    progress = (bytes_read / file_size * 100) if file_size > 0 else 0
-                    log_callback(f"计算 MD5: {file_path.name} ({progress:.1f}%)")
-        
-        return md5_hash.hexdigest()
+
     
-    def should_sync_file(self, source_file: Path, target_file: Path, overwrite_existing: bool = False) -> Tuple[bool, str]:
+    def should_sync_file(
+        self, 
+        source_file: Path, 
+        target_file: Path, 
+        overwrite_existing: bool = False,
+        rule_not_exists: bool = False,
+        rule_size_diff: bool = False,
+        rule_mtime_newer: bool = False
+    ) -> Tuple[bool, str]:
         """
-        智能判断是否需要同步文件
+        智能判断是否需要同步文件（支持子规则）
         
         Args:
             source_file: 源文件路径
             target_file: 目标文件路径
-            overwrite_existing: 是否覆盖已存在的文件
+            overwrite_existing: 是否覆盖已存在的文件（主规则，内部使用）
+            rule_not_exists: 子规刑1 - 目标文件不存在时同步
+            rule_size_diff: 子规刑2 - 文件大小不一致时同步
+            rule_mtime_newer: 子规刑3 - 源文件修改时间更新时同步
             
         Returns:
             (should_sync, reason) - 是否需要同步及原因
         """
-        # 目标文件不存在，需要同步
+        # 目标文件不存在
         if not target_file.exists():
-            return True, "target_not_exists"
+            # 如果子规刑1启用，则同步
+            if rule_not_exists:
+                return True, "target_not_exists (rule)"
+            # 如果没有启用任何子规则，但是覆盖模式，也同步
+            if overwrite_existing:
+                return True, "target_not_exists (overwrite_mode)"
+            # 否则跳过
+            return False, "target_not_exists (no_rule)"
         
-        # 如果是覆盖模式，直接同步
-        if overwrite_existing:
-            return True, "overwrite_mode"
-        
-        # 跳过模式下，进行智能判断
+        # 目标文件已存在，检查其他子规则
         try:
             source_stat = source_file.stat()
             target_stat = target_file.stat()
             
-            # 大小不一致，需要同步
-            if source_stat.st_size != target_stat.st_size:
-                return True, "size_diff"
+            # 子规刑2: 大小不一致
+            if rule_size_diff and source_stat.st_size != target_stat.st_size:
+                return True, "size_diff (rule)"
             
-            # 修改时间比较（源文件更新）
-            if source_stat.st_mtime > target_stat.st_mtime:
-                return True, "mtime_newer"
+            # 子规刑3: 修改时间比较（源文件更新）
+            if rule_mtime_newer and source_stat.st_mtime > target_stat.st_mtime:
+                return True, "mtime_newer (rule)"
+            
+            # 如果是覆盖模式，直接同步
+            if overwrite_existing:
+                return True, "overwrite_mode"
             
             # 文件相同，无需同步
             return False, "unchanged"
@@ -194,18 +182,22 @@ class FileSyncer:
         self,
         source_file: Path,
         target_file: Path,
-        verify_md5: bool = False,
         overwrite_existing: bool = False,
+        rule_not_exists: bool = False,
+        rule_size_diff: bool = False,
+        rule_mtime_newer: bool = False,
         log_callback: Optional[Callable[[str], None]] = None
     ) -> str:
         """
-        同步单个文件（原子化写入）
+        同步单个文件（原子化写入，支持子规则）
         
         Args:
             source_file: 源文件路径
             target_file: 目标文件路径
-            verify_md5: 是否进行 MD5 校验
-            overwrite_existing: 是否覆盖已存在的文件（True=覆盖，False=智能判断）
+            overwrite_existing: 是否覆盖已存在的文件（主规则，内部使用）
+            rule_not_exists: 子规刑1 - 目标文件不存在时同步
+            rule_size_diff: 子规刑2 - 文件大小不一致时同步
+            rule_mtime_newer: 子规刑3 - 源文件修改时间更新时同步
             log_callback: 日志回调函数
             
         Returns:
@@ -218,8 +210,11 @@ class FileSyncer:
                     log_callback(f"已忽略: {source_file.name} (垃圾文件)")
                 return "Skipped (Ignored)"
             
-            # 2. 智能判断是否需要同步
-            should_sync, reason = self.should_sync_file(source_file, target_file, overwrite_existing)
+            # 2. 智能判断是否需要同步（传入子规则参数）
+            should_sync, reason = self.should_sync_file(
+                source_file, target_file, overwrite_existing,
+                rule_not_exists, rule_size_diff, rule_mtime_newer
+            )
             if not should_sync:
                 if log_callback:
                     if reason == "unchanged":
@@ -261,27 +256,7 @@ class FileSyncer:
                 temp_file.unlink()
                 return "Failed"
             
-            # 7. MD5 校验（可选）
-            if verify_md5:
-                if log_callback:
-                    log_callback(f"开始 MD5 校验: {source_file.name}")
-                
-                source_md5 = self.calculate_md5(source_file, log_callback)
-                temp_md5 = self.calculate_md5(temp_file, log_callback)
-                
-                if source_md5 != temp_md5:
-                    if log_callback:
-                        log_callback(
-                            f"MD5 校验失败: {source_file.name} "
-                            f"(源: {source_md5}, 目标: {temp_md5})"
-                        )
-                    temp_file.unlink()
-                    return "Failed"
-                
-                if log_callback:
-                    log_callback(f"MD5 校验通过: {source_file.name}")
-            
-            # 8. 原子化重命名
+            # 7. 原子化重命名
             if target_file.exists():
                 target_file.unlink()
             
@@ -307,19 +282,21 @@ class FileSyncer:
     
     def sync_directory(
         self,
-        recursive: bool = True,
-        verify_md5: bool = False,
         overwrite_existing: bool = False,
+        rule_not_exists: bool = False,
+        rule_size_diff: bool = False,
+        rule_mtime_newer: bool = False,
         thread_count: int = 1,
         log_callback: Optional[Callable[[str], None]] = None
     ) -> dict:
         """
-        同步整个目录（支持多线程）
+        同步整个目录（支持多线程，固定递归模式，支持子规则）
         
         Args:
-            recursive: 是否递归同步子目录
-            verify_md5: 是否进行 MD5 校验
-            overwrite_existing: 是否覆盖已存在的文件
+            overwrite_existing: 是否覆盖已存在的文件（主规则，内部使用）
+            rule_not_exists: 子规刑1 - 目标文件不存在时同步
+            rule_size_diff: 子规刑2 - 文件大小不一致时同步
+            rule_mtime_newer: 子规刑3 - 源文件修改时间更新时同步
             thread_count: 线程数（1=单线程，>1=多线程）
             log_callback: 日志回调函数
             
@@ -340,8 +317,8 @@ class FileSyncer:
             if thread_count > 1:
                 log_callback(f"多线程模式: {thread_count} 个线程")
         
-        # 收集所有需要同步的文件
-        pattern = "**/*" if recursive else "*"
+        # 收集所有需要同步的文件（固定递归模式）
+        pattern = "**/*"
         file_tasks = []
         for source_file in self.source_dir.glob(pattern):
             if not source_file.is_file():
@@ -355,7 +332,11 @@ class FileSyncer:
         # 单线程模式
         if thread_count == 1:
             for source_file, target_file in file_tasks:
-                result = self.sync_file(source_file, target_file, verify_md5, overwrite_existing, log_callback)
+                result = self.sync_file(
+                    source_file, target_file, overwrite_existing,
+                    rule_not_exists, rule_size_diff, rule_mtime_newer,
+                    log_callback
+                )
                 self._update_stats(stats, result)
         
         # 多线程模式
@@ -367,8 +348,10 @@ class FileSyncer:
                         self.sync_file,
                         source_file,
                         target_file,
-                        verify_md5,
                         overwrite_existing,
+                        rule_not_exists,
+                        rule_size_diff,
+                        rule_mtime_newer,
                         log_callback
                     ): (source_file, target_file)
                     for source_file, target_file in file_tasks

@@ -385,9 +385,10 @@ class TaskScheduler:
                     )
                     
                     stats = syncer.sync_directory(
-                        recursive=task.recursive,
-                        verify_md5=task.verify_md5,
                         overwrite_existing=task.overwrite_existing,
+                        rule_not_exists=task.rule_not_exists,
+                        rule_size_diff=task.rule_size_diff,
+                        rule_mtime_newer=task.rule_mtime_newer,
                         thread_count=task.thread_count,
                         log_callback=self._log
                     )
@@ -488,13 +489,27 @@ class TaskScheduler:
                 data = json.load(f)
             
             self.tasks.clear()
-            for task_data in data.get("tasks", []):
-                task = SyncTask.from_dict(task_data)
-                # 重置状态为 IDLE（避免启动时状态不一致）
-                task.update_status(TaskStatus.IDLE)
-                self.tasks[task.id] = task
+            loaded_count = 0
+            failed_count = 0
             
-            self._log(f"✓ 已加载 {len(self.tasks)} 个任务")
+            for task_data in data.get("tasks", []):
+                try:
+                    task = SyncTask.from_dict(task_data)
+                    # 重置状态为 IDLE（避免启动时状态不一致）
+                    task.update_status(TaskStatus.IDLE)
+                    self.tasks[task.id] = task
+                    loaded_count += 1
+                    
+                except Exception as e:
+                    task_name = task_data.get('name', '未知任务')
+                    self._log(f"✗ 加载任务失败: {task_name} - {str(e)}")
+                    failed_count += 1
+            
+            # 提示加载结果
+            if failed_count > 0:
+                self._log(f"⚠️ 有 {failed_count} 个任务加载失败")
+            
+            self._log(f"✓ 已加载 {loaded_count} 个任务")
             
         except Exception as e:
             self._log(f"✗ 加载任务配置失败: {str(e)}")

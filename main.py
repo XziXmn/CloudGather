@@ -266,11 +266,12 @@ def api_tasks():
             schedule_type='CRON',
             cron_expression=cron_expression,
             interval=300,  # cron 模式下 interval 不使用，但需要默认值
-            recursive=_parse_bool(data.get('recursive', True), True),
-            verify_md5=_parse_bool(data.get('verify_md5', False), False),
             enabled=_parse_bool(data.get('enabled', True), True),
             overwrite_existing=_parse_bool(data.get('overwrite_existing', False), False),
-            thread_count=int(data.get('thread_count', 1))
+            thread_count=int(data.get('thread_count', 1)),
+            rule_not_exists=_parse_bool(data.get('rule_not_exists', False), False),
+            rule_size_diff=_parse_bool(data.get('rule_size_diff', False), False),
+            rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False)
         )
     else:
         # 间隔调度
@@ -288,11 +289,12 @@ def api_tasks():
             target_path=target_path,
             schedule_type='INTERVAL',
             interval=interval,
-            recursive=_parse_bool(data.get('recursive', True), True),
-            verify_md5=_parse_bool(data.get('verify_md5', False), False),
             enabled=_parse_bool(data.get('enabled', True), True),
             overwrite_existing=_parse_bool(data.get('overwrite_existing', False), False),
-            thread_count=int(data.get('thread_count', 1))
+            thread_count=int(data.get('thread_count', 1)),
+            rule_not_exists=_parse_bool(data.get('rule_not_exists', False), False),
+            rule_size_diff=_parse_bool(data.get('rule_size_diff', False), False),
+            rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False)
         )
 
     if scheduler.add_task(task):
@@ -325,10 +327,6 @@ def api_task_detail(task_id: str):
             updates['interval'] = int(data['interval'])
         except ValueError:
             return jsonify({'success': False, 'error': '同步间隔必须是数字'}), 400
-    if 'recursive' in data:
-        updates['recursive'] = _parse_bool(data['recursive'], task.recursive)
-    if 'verify_md5' in data:
-        updates['verify_md5'] = _parse_bool(data['verify_md5'], task.verify_md5)
     if 'enabled' in data:
         updates['enabled'] = _parse_bool(data['enabled'], task.enabled)
     if 'overwrite_existing' in data:
@@ -338,6 +336,12 @@ def api_task_detail(task_id: str):
             updates['thread_count'] = max(1, int(data['thread_count']))
         except ValueError:
             return jsonify({'success': False, 'error': '线程数必须是数字'}), 400
+    if 'rule_not_exists' in data:
+        updates['rule_not_exists'] = _parse_bool(data['rule_not_exists'], task.rule_not_exists)
+    if 'rule_size_diff' in data:
+        updates['rule_size_diff'] = _parse_bool(data['rule_size_diff'], task.rule_size_diff)
+    if 'rule_mtime_newer' in data:
+        updates['rule_mtime_newer'] = _parse_bool(data['rule_mtime_newer'], task.rule_mtime_newer)
 
     # 路径更新时校验并创建目标目录
     if 'source_path' in updates or 'target_path' in updates:
@@ -361,6 +365,43 @@ def api_trigger_task(task_id: str):
     if scheduler.trigger_task_now(task_id):
         return jsonify({'success': True})
     return jsonify({'success': False, 'error': '任务状态非空闲或不存在'}), 400
+
+
+@app.route('/api/tasks/<task_id>/full-overwrite', methods=['POST'])
+def api_full_overwrite_task(task_id: str):
+    """全量覆盖：一次性强制覆盖所有已存在文件"""
+    task = scheduler.get_task(task_id)
+    if not task:
+        return jsonify({'success': False, 'error': '任务不存在'}), 404
+    
+    if task.status != 'IDLE':
+        return jsonify({'success': False, 'error': '任务状态非空闲，无法执行'}), 400
+    
+    # 使用现有的 trigger_task_now 机制，但传递特殊标记
+    # 注：这里需要修改任务的 overwrite_existing 为 True，执行后恢复
+    original_overwrite = task.overwrite_existing
+    task.overwrite_existing = True  # 临时设置为覆盖模式
+    
+    # 记录日志
+    log_handler(f"🔥 开始执行全量覆盖: {task.name}")
+    
+    # 触发任务
+    success = scheduler.trigger_task_now(task_id)
+    
+    if success:
+        # 在后台恢复原始设置（不保存到文件）
+        # 注：任务执行完后会自动恢复
+        import threading
+        def reset_overwrite():
+            import time
+            time.sleep(1)  # 等待任务开始执行
+            task.overwrite_existing = original_overwrite
+        threading.Thread(target=reset_overwrite, daemon=True).start()
+        
+        return jsonify({'success': True})
+    else:
+        task.overwrite_existing = original_overwrite  # 恢复
+        return jsonify({'success': False, 'error': '触发任务失败'}), 500
 
 
 @app.route('/api/scheduler/start', methods=['POST'])
