@@ -248,7 +248,8 @@ function renderTasks(tasks) {
             </div>
             <div class="flex items-center gap-4 text-sm text-gray-600 mb-3">
                 ${scheduleInfo}
-                ${task.last_run_time ? `<span class="text-xs text-gray-500"><i class="fas fa-history mr-1"></i>${new Date(task.last_run_time).toLocaleString()}</span>` : ''}
+                ${task.last_run_time ? `<span class="text-xs text-gray-500"><i class="fas fa-history mr-1"></i>上次: ${new Date(task.last_run_time).toLocaleString()}</span>` : ''}
+                ${task.next_run_time ? `<span class="text-xs text-blue-600"><i class="fas fa-clock mr-1"></i>下次: ${new Date(task.next_run_time).toLocaleString()}</span>` : ''}
             </div>
             <div class="flex gap-2 flex-wrap mt-3">
                 <button onclick="triggerTask('${task.id}')" class="btn btn-primary text-sm" ${task.status !== 'IDLE' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''}><i class="fas fa-play"></i>立即运行</button>

@@ -571,6 +571,32 @@ class TaskScheduler:
         """
         return self.task_queue.qsize()
     
+    def get_next_run_time(self, task_id: str):
+        """
+        获取任务的下次执行时间
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            datetime 对象，如果任务未启用或不存在则返回 None
+        """
+        if task_id not in self.tasks:
+            return None
+        
+        task = self.tasks[task_id]
+        
+        # 如果任务未启用，返回 None
+        if not task.enabled:
+            return None
+        
+        # 从 APScheduler 获取下次执行时间
+        job = self.scheduler.get_job(task_id)
+        if job and job.next_run_time:
+            return job.next_run_time
+        
+        return None
+    
     def __del__(self):
         """析构函数：确保资源清理"""
         if self.is_running:

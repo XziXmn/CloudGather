@@ -110,6 +110,12 @@ def index():
 
 def _task_to_dict(task: SyncTask) -> dict:
     data = task.to_dict()
+    # 添加下次执行时间
+    next_run_time = scheduler.get_next_run_time(task.id)
+    if next_run_time:
+        data['next_run_time'] = next_run_time.isoformat()
+    else:
+        data['next_run_time'] = None
     return data
 
 
