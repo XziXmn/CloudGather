@@ -339,9 +339,9 @@ class TaskScheduler:
     
     def _task_consumer(self):
         """
-        后台消费者线程：从队列取出任务并执行同步
+        后台任务线程：从队列取出任务并执行同步
         """
-        self._log("📌 任务消费者线程已启动")
+        self._log("📌 任务线程已启动")
         
         while self.is_running:
             try:
@@ -422,15 +422,15 @@ class TaskScheduler:
                     self.save_tasks()
                 
             except Exception as e:
-                self._log(f"消费者线程异常: {str(e)}")
+                self._log(f"任务线程异常: {str(e)}")
                 import traceback
                 self._log(f"错误详情: {traceback.format_exc()}")
                 time.sleep(1)
         
-        self._log("📌 任务消费者线程已停止")
+        self._log("📌 任务线程已停止")
     
     def start(self):
-        """启动调度器和消费者线程"""
+        """启动调度器和任务线程"""
         if self.is_running:
             self._log("⚠ 调度器已在运行")
             return
@@ -445,7 +445,7 @@ class TaskScheduler:
         # 启动 APScheduler
         self.scheduler.start()
         
-        # 启动消费者线程
+        # 启动任务线程
         self.consumer_thread = threading.Thread(
             target=self._task_consumer,
             daemon=True,
@@ -456,7 +456,7 @@ class TaskScheduler:
         self._log(f"✓ 调度器已启动 (任务数: {len(self.tasks)})")
     
     def stop(self):
-        """停止调度器和消费者线程"""
+        """停止调度器和任务线程"""
         if not self.is_running:
             self._log("⚠ 调度器未运行")
             return
@@ -469,7 +469,7 @@ class TaskScheduler:
         # 停止 APScheduler
         self.scheduler.shutdown(wait=False)
         
-        # 等待消费者线程结束
+        # 等待任务线程结束
         if self.consumer_thread and self.consumer_thread.is_alive():
             self.consumer_thread.join(timeout=5)
         

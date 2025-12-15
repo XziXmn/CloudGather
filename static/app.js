@@ -376,14 +376,22 @@ function showAddTaskModal() {
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
     
-    // 重置子规则按钮状态（默认全部未启用）
+    // 重置子规则按钮状态（默认启用「文件不存在」规则）
     ['ruleNotExists', 'ruleSizeDiff', 'ruleMtimeNewer'].forEach(id => {
         const btn = document.getElementById(id);
         if (btn) {
-            btn.dataset.active = 'false';
-            btn.style.borderColor = '#e5e9f2';
-            btn.style.background = 'transparent';
-            btn.style.color = '#6b7280';
+            // 默认启用「文件不存在」规则
+            if (id === 'ruleNotExists') {
+                btn.dataset.active = 'true';
+                btn.style.borderColor = '#3b82f6';
+                btn.style.background = '#eff6ff';
+                btn.style.color = '#1e40af';
+            } else {
+                btn.dataset.active = 'false';
+                btn.style.borderColor = '#e5e9f2';
+                btn.style.background = 'transparent';
+                btn.style.color = '#6b7280';
+            }
         }
     });
     
@@ -414,9 +422,9 @@ function loadDraft() {
                 const btn = document.getElementById(id);
                 if (btn && rules[id]) {
                     btn.dataset.active = 'true';
-                    btn.style.borderColor = '#5b8bff';
-                    btn.style.background = '#e9efff';
-                    btn.style.color = '#3f70e8';
+                    btn.style.borderColor = '#3b82f6';
+                    btn.style.background = '#eff6ff';
+                    btn.style.color = '#1e40af';
                 }
             });
         }
@@ -467,9 +475,9 @@ function toggleRule(button, ruleKey) {
     } else {
         // 启用
         button.dataset.active = 'true';
-        button.style.borderColor = '#5b8bff';
-        button.style.background = '#e9efff';
-        button.style.color = '#3f70e8';
+        button.style.borderColor = '#3b82f6';
+        button.style.background = '#eff6ff';
+        button.style.color = '#1e40af';
     }
     
     taskFormDirty = true;
@@ -530,9 +538,9 @@ async function editTask(taskId) {
             if (btn) {
                 if (rules[id]) {
                     btn.dataset.active = 'true';
-                    btn.style.borderColor = '#5b8bff';
-                    btn.style.background = '#e9efff';
-                    btn.style.color = '#3f70e8';
+                    btn.style.borderColor = '#3b82f6';
+                    btn.style.background = '#eff6ff';
+                    btn.style.color = '#1e40af';
                 } else {
                     btn.dataset.active = 'false';
                     btn.style.borderColor = '#e5e9f2';

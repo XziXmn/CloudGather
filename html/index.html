@@ -476,13 +476,15 @@
                     
                     <!-- 同步规则 -->
                     <div class="md:col-span-2">
-                        <label class="block text-sm text-gray-600 mb-3">同步策略 <span class="text-xs text-gray-400">(默认跳过所有已存在文件，选择子规则以启用特定同步条件)</span></label>
+                        <label class="block text-sm text-gray-600 mb-3">同步策略 <span class="text-xs text-gray-400">(选择同步触发条件，可多选)</span></label>
                         <div class="flex flex-wrap gap-3 text-sm items-center">
                             <!-- 子规则1: 文件不存在 -->
                             <button type="button" 
                                     id="ruleNotExists" 
                                     class="px-4 py-2 rounded-lg border-2 transition-all duration-200"
-                                    style="border-color: #e5e9f2; background: transparent; color: #6b7280;"
+                                    style="border-color: #3b82f6; background: #eff6ff; color: #1e40af;"
+                                    data-active="true"
+                                    title="当目标目录中不存在该文件时，执行同步操作。这是最常用的规则，适合增量备份场景。"
                                     onclick="toggleRule(this, 'rule_not_exists')">
                                 <i class="fas fa-file-circle-plus mr-1"></i>文件不存在
                             </button>
@@ -492,6 +494,7 @@
                                     id="ruleSizeDiff" 
                                     class="px-4 py-2 rounded-lg border-2 transition-all duration-200"
                                     style="border-color: #e5e9f2; background: transparent; color: #6b7280;"
+                                    title="当源文件与目标文件大小不一致时，执行同步操作。用于检测文件内容是否完整或已更新。"
                                     onclick="toggleRule(this, 'rule_size_diff')">
                                 <i class="fas fa-arrows-left-right mr-1"></i>文件大小不同
                             </button>
@@ -501,12 +504,13 @@
                                     id="ruleMtimeNewer" 
                                     class="px-4 py-2 rounded-lg border-2 transition-all duration-200"
                                     style="border-color: #e5e9f2; background: transparent; color: #6b7280;"
+                                    title="当源文件的修改时间比目标文件更新时，执行同步操作。适合同步最新版本文件的场景。"
                                     onclick="toggleRule(this, 'rule_mtime_newer')">
                                 <i class="fas fa-clock-rotate-left mr-1"></i>源文件更新
                             </button>
                         </div>
                         <p class="text-xs text-gray-500 mt-2">
-                            <i class="fas fa-info-circle"></i> 默认跳过所有已存在文件。点击按钮启用对应条件，仅在这些情况下才会进行同步。
+                            <i class="fas fa-info-circle"></i> 可多选规则组合使用。默认已选中「文件不存在」规则，适合大多数同步场景。鼠标悬停可查看详细说明。
                         </p>
                     </div>
                     
