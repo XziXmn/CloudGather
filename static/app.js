@@ -282,7 +282,7 @@ function renderTasks(tasks) {
                     <div class="flex items-center gap-3 mb-1">
                         <h4 class="text-lg font-bold">${task.name}</h4>
                         <span class="status-badge-container">${getStatusBadge(task.status)}</span>
-                        ${task.is_slow_storage ? '<span class="text-xs px-2 py-1 bg-orange-100 text-orange-600 rounded" title="慢速存储优化"><i class="fas fa-hdd mr-1"></i>NAS</span>' : ''}
+                        ${task.is_slow_storage ? '<span class="text-xs px-2 py-1 bg-orange-100 text-orange-600 rounded" title="网络云盘优化"><i class="fas fa-hdd mr-1"></i>云盘</span>' : ''}
                     </div>
                 </div>
                 <div class="flex items-center gap-2" title="${task.enabled ? '任务已启用' : '任务已禁用'}">
@@ -300,8 +300,6 @@ function renderTasks(tasks) {
                     <div class="flex items-center"><i class="fas fa-folder text-green-500 mr-2"></i><span class="font-mono">${task.target_path}</span></div>
                 </div>
             </div>
-            ${progressBar}
-            ${statsInfo}
             <div class="flex items-center gap-4 text-sm text-gray-600 mb-3">
                 ${scheduleInfo}
                 ${task.last_run_time ? `<span class="text-xs text-gray-500"><i class="fas fa-history mr-1"></i>上次: ${new Date(task.last_run_time).toLocaleString()}</span>` : ''}
@@ -314,6 +312,8 @@ function renderTasks(tasks) {
                 <button onclick="editTask('${task.id}')" class="btn btn-secondary text-sm"><i class="fas fa-edit"></i>编辑</button>
                 <button onclick="deleteTask('${task.id}', '${task.name.replace(/'/g, "''")}')" class="btn btn-secondary text-sm border-red-500 text-red-500"><i class="fas fa-trash"></i>删除</button>
             </div>
+            ${progressBar}
+            ${statsInfo}
         </div>
         `;
     }).join('');
