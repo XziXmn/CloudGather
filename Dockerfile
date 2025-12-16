@@ -34,13 +34,14 @@ ENV IS_DOCKER=true \
     PGID=1001 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    PYTHONIOENCODING=utf-8
+    PYTHONIOENCODING=utf-8 \
+    PYTHONUNBUFFERED=1
 
 # 设置 entrypoint 脚本权限
 RUN chmod +x /entrypoint.sh
 
 # 暴露端口
-EXPOSE 8080
+EXPOSE 3602
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
@@ -50,4 +51,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 ENTRYPOINT ["/entrypoint.sh"]
 
 # 默认命令
-CMD ["python", "main.py"]
+CMD ["python", "-u", "main.py"]

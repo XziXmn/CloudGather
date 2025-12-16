@@ -80,7 +80,7 @@ class SyncTask:
         self.is_slow_storage = is_slow_storage
         # 根据存储类型自动调整线程数
         if is_slow_storage:
-            self.thread_count = min(max(1, thread_count), 4)  # 慢速存储限制最多4线程
+            self.thread_count = min(max(1, thread_count), 2)  # 慢速存储限制最多2线程
         else:
             self.thread_count = max(1, thread_count)  # 确保至少1个线程
         self.rule_not_exists = rule_not_exists

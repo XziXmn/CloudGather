@@ -6,6 +6,7 @@ Version: 0.2
 
 import atexit
 import os
+import sys
 import psutil
 import threading
 import logging
@@ -25,6 +26,9 @@ from version import __version__
 
 # 版本信息
 VERSION = __version__
+
+# 环境适配：判断是否在 Docker 环境中
+IS_DOCKER = os.getenv('IS_DOCKER', 'false').lower() == 'true'
 
 # 配置日志格式
 # 确保日志目录存在
@@ -56,7 +60,7 @@ file_handler.setFormatter(file_formatter)
 root_logger.addHandler(file_handler)
 
 # 控制台 handler - 只显示业务日志
-console_handler = logging.StreamHandler()
+console_handler = logging.StreamHandler(sys.stdout)  # 显式指定 stdout
 console_handler.setLevel(getattr(logging, CONSOLE_LEVEL, logging.INFO))
 console_formatter = logging.Formatter(
     '[%(asctime)s] %(levelname)s: %(message)s',
@@ -64,6 +68,11 @@ console_formatter = logging.Formatter(
 )
 console_handler.setFormatter(console_formatter)
 root_logger.addHandler(console_handler)
+
+# Docker 环境下强制刷新输出
+if IS_DOCKER:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
 
 
 def cleanup_old_logs():
@@ -91,8 +100,7 @@ def cleanup_old_logs():
 # 启动时清理一次过期日志
 cleanup_old_logs()
 
-# 环境适配：判断是否在 Docker 环境中
-IS_DOCKER = os.getenv('IS_DOCKER', 'false').lower() == 'true'
+# 环境适配：配置路径
 CONFIG_PATH = '/app/config/tasks.json' if IS_DOCKER else 'config/tasks.json'
 
 # 全局调度器实例
@@ -106,9 +114,13 @@ _current_task_id: Optional[str] = None  # 当前正在执行的任务ID
 
 
 def log_handler(message: str):
-    """统一日志处理器，存入内存供前端拉取"""
+    """统一日志处理器，存入内存供前端拉取并输出到控制台"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     entry = f"[{timestamp}] {message}"
+    
+    # 同时输出到控制台（使用 logging）
+    logging.info(message)
+    
     with log_lock:
         # 添加到全局日志
         logs = _task_logs.setdefault('general', [])

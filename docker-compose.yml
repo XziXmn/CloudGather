@@ -7,7 +7,7 @@ services:
     volumes:
       # 配置文件持久化（必需）
       - '/vol1/1000/appdata/cloudgather/config:/app/config'
-      - /vol1/1000/appdata/cloudgather/logs:/app/logs
+      - '/vol1/1000/appdata/cloudgather/logs:/app/logs'
       - '/vol1/1000/data:/data'
       - '/vol02/1000-0-dfac5347/测试:/测试'
       # 挂载源目录和目标目录（根据实际需求修改路径）
