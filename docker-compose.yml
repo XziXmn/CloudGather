@@ -1,7 +1,7 @@
 services:
   # CloudGather | 媒体文件同步工具
   cloudgather:
-    image: xzixmn/cloudgather:beta
+    image: xzixmn/cloudgather:latest
     container_name: cloudgather
     
     volumes:

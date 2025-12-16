@@ -56,7 +56,7 @@
 ```yaml
 services:
   cloudgather:
-    image: xzixmn/cloudgather:beta
+    image: xzixmn/cloudgather:latest
     container_name: cloudgather
     
     volumes:
