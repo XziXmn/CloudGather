@@ -1,12 +1,12 @@
 services:
   # CloudGather | 媒体文件同步工具
   cloudgather:
-    image: moyuemoyun/cloudgather:beta
+    image: xzixmn/cloudgather:beta
     container_name: cloudgather
     
     volumes:
       # 配置文件持久化（必需）
-      - '/vol1/1000/appdata/cloudgather:/app/config'
+      - '/vol1/1000/appdata/cloudgather/config:/app/config'
       - /vol1/1000/appdata/cloudgather/logs:/app/logs
       - '/vol1/1000/data:/data'
       - '/vol02/1000-0-dfac5347/测试:/测试'
