@@ -41,7 +41,8 @@ class SyncTask:
         thread_count: int = 1,  # 同步线程数，默认1（单线程）
         rule_not_exists: bool = False,  # 子规则：文件不存在时同步
         rule_size_diff: bool = False,  # 子规则：大小不一致时同步
-        rule_mtime_newer: bool = False  # 子规则：源文件更新时同步
+        rule_mtime_newer: bool = False,  # 子规则：源文件更新时同步
+        is_slow_storage: bool = False  # 目标是否为慢速存储（NAS/网盘挂载）
     ):
         """
         初始化同步任务
@@ -62,6 +63,7 @@ class SyncTask:
             rule_not_exists: 子规则 - 目标不存在时同步
             rule_size_diff: 子规则 - 大小不一致时同步
             rule_mtime_newer: 子规则 - 源文件更新时同步
+            is_slow_storage: 目标是否为慢速存储（NAS/网盘挂载）
         """
         self.id = task_id if task_id else str(uuid.uuid4())
         self.name = name
@@ -75,7 +77,12 @@ class SyncTask:
         self.enabled = enabled
         self.recursive = True  # 固定为递归模式
         self.overwrite_existing = overwrite_existing
-        self.thread_count = max(1, thread_count)  # 确保至少1个线程
+        self.is_slow_storage = is_slow_storage
+        # 根据存储类型自动调整线程数
+        if is_slow_storage:
+            self.thread_count = min(max(1, thread_count), 4)  # 慢速存储限制最多4线程
+        else:
+            self.thread_count = max(1, thread_count)  # 确保至少1个线程
         self.rule_not_exists = rule_not_exists
         self.rule_size_diff = rule_size_diff
         self.rule_mtime_newer = rule_mtime_newer
@@ -103,7 +110,8 @@ class SyncTask:
             "thread_count": self.thread_count,
             "rule_not_exists": self.rule_not_exists,
             "rule_size_diff": self.rule_size_diff,
-            "rule_mtime_newer": self.rule_mtime_newer
+            "rule_mtime_newer": self.rule_mtime_newer,
+            "is_slow_storage": self.is_slow_storage
         }
     
     @classmethod
@@ -132,7 +140,8 @@ class SyncTask:
             thread_count=data.get("thread_count", 1),
             rule_not_exists=data.get("rule_not_exists", False),
             rule_size_diff=data.get("rule_size_diff", False),
-            rule_mtime_newer=data.get("rule_mtime_newer", False)
+            rule_mtime_newer=data.get("rule_mtime_newer", False),
+            is_slow_storage=data.get("is_slow_storage", False)
         )
     
     def update_status(self, new_status: TaskStatus):

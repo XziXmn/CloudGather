@@ -6,6 +6,7 @@ let queueCache = [];
 let currentView = 'dashboard';
 const logWindows = new Map(); // logId -> element
 const logCache = {}; // 本地缓存各日志内容
+const logAutoScroll = {}; // 记录每个日志窗口是否自动滚动
 let taskFormDirty = false; // 表单是否已修改
 let directoryCache = {}; // 目录缓存
 
@@ -88,6 +89,19 @@ function openLogWindow(logId, title) {
     modal.addEventListener('click', (e) => { if (e.target === modal) closeLogWindow(logId); });
     root.appendChild(modal);
     logWindows.set(logId, modal);
+    
+    // 初始化为自动滚动
+    logAutoScroll[logId] = true;
+    
+    // 添加滚动监听：检测用户是否向上滚动
+    const container = modal.querySelector(`#log-content-${logId}`);
+    if (container) {
+        container.addEventListener('scroll', () => {
+            const isAtBottom = container.scrollHeight - (container.scrollTop + container.clientHeight) < 50;
+            logAutoScroll[logId] = isAtBottom;
+        });
+    }
+    
     loadLogsFor(logId);
 }
 
@@ -96,6 +110,7 @@ function closeLogWindow(logId) {
     if (modal) {
         modal.remove();
         logWindows.delete(logId);
+        delete logAutoScroll[logId]; // 清理滚动状态
     }
 }
 
@@ -222,6 +237,44 @@ function renderTasks(tasks) {
             scheduleInfo = `<div class="flex items-center"><i class="fas fa-clock text-yellow-500 mr-2"></i><span>间隔：${formatInterval(task.interval)}</span></div>`;
         }
         
+        // 渲染进度条（仅当任务正在运行时）
+        let progressBar = '';
+        if (task.status === 'RUNNING' && task.progress) {
+            const p = task.progress;
+            progressBar = `
+                <div class="mt-3 mb-2">
+                    <div class="flex items-center justify-between text-xs mb-1">
+                        <span class="text-gray-600">进度: ${p.done} / ${p.total} 文件</span>
+                        <span class="text-blue-600 font-bold">${p.percent}%</span>
+                    </div>
+                    <div class="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div class="h-full bg-blue-500 transition-all" style="width: ${p.percent}%"></div>
+                    </div>
+                    <div class="flex items-center gap-3 text-xs text-gray-500 mt-1">
+                        <span><i class="fas fa-check text-green-500 mr-1"></i>成功: ${p.success}</span>
+                        <span><i class="fas fa-forward text-yellow-500 mr-1"></i>跳过: ${p.skipped}</span>
+                        <span><i class="fas fa-times text-red-500 mr-1"></i>失败: ${p.failed}</span>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // 渲染最终统计信息（仅当任务有执行结果时）
+        let statsInfo = '';
+        if (task.stats) {
+            const s = task.stats;
+            statsInfo = `
+                <div class="mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded text-xs">
+                    <div class="flex items-center gap-3 text-gray-600 dark:text-gray-400">
+                        <span><i class="fas fa-file mr-1"></i>总数: ${s.total}</span>
+                        <span><i class="fas fa-check text-green-500 mr-1"></i>成功: ${s.success}</span>
+                        <span><i class="fas fa-forward text-yellow-500 mr-1"></i>跳过: ${s.skipped}</span>
+                        <span><i class="fas fa-times text-red-500 mr-1"></i>失败: ${s.failed}</span>
+                    </div>
+                </div>
+            `;
+        }
+        
         return `
         <div class="task-card" data-task-id="${task.id}">
             <div class="flex items-start justify-between mb-3">
@@ -229,6 +282,7 @@ function renderTasks(tasks) {
                     <div class="flex items-center gap-3 mb-1">
                         <h4 class="text-lg font-bold">${task.name}</h4>
                         <span class="status-badge-container">${getStatusBadge(task.status)}</span>
+                        ${task.is_slow_storage ? '<span class="text-xs px-2 py-1 bg-orange-100 text-orange-600 rounded" title="慢速存储优化"><i class="fas fa-hdd mr-1"></i>NAS</span>' : ''}
                     </div>
                 </div>
                 <div class="flex items-center gap-2" title="${task.enabled ? '任务已启用' : '任务已禁用'}">
@@ -246,6 +300,8 @@ function renderTasks(tasks) {
                     <div class="flex items-center"><i class="fas fa-folder text-green-500 mr-2"></i><span class="font-mono">${task.target_path}</span></div>
                 </div>
             </div>
+            ${progressBar}
+            ${statsInfo}
             <div class="flex items-center gap-4 text-sm text-gray-600 mb-3">
                 ${scheduleInfo}
                 ${task.last_run_time ? `<span class="text-xs text-gray-500"><i class="fas fa-history mr-1"></i>上次: ${new Date(task.last_run_time).toLocaleString()}</span>` : ''}
@@ -329,7 +385,10 @@ async function loadLogsFor(logId) {
             container.innerHTML = '<div class="text-gray-400">暂无日志</div>';
         } else {
             container.innerHTML = logs.map(log => `<div class="mb-1">${log}</div>`).join('');
-            container.scrollTop = container.scrollHeight;
+            // 智能滚动：只有当 logAutoScroll[logId] 为 true 时才自动滚动到底部
+            if (logAutoScroll[logId] !== false) {
+                container.scrollTop = container.scrollHeight;
+            }
         }
     } catch (error) {
         console.error('加载日志失败:', error);
@@ -554,6 +613,12 @@ async function editTask(taskId) {
         // 线程数
         document.getElementById('taskThreadCount').value = task.thread_count || 1;
         
+        // 慢速存储选项
+        const slowStorageCheckbox = document.getElementById('isSlowStorage');
+        if (slowStorageCheckbox) {
+            slowStorageCheckbox.checked = task.is_slow_storage || false;
+        }
+        
         // 填充 Cron 表达式
         document.getElementById('cronExpression').value = task.cron_expression || '';
         validateCron();
@@ -579,6 +644,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         rule_not_exists: document.getElementById('ruleNotExists').dataset.active === 'true',
         rule_size_diff: document.getElementById('ruleSizeDiff').dataset.active === 'true',
         rule_mtime_newer: document.getElementById('ruleMtimeNewer').dataset.active === 'true',
+        is_slow_storage: document.getElementById('isSlowStorage') ? document.getElementById('isSlowStorage').checked : false,
         enabled: true  // 默认启用，后续可通过开关控制
     };
     

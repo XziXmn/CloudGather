@@ -207,7 +207,7 @@ class FileSyncer:
             # 1. 垃圾过滤
             if self.should_ignore(source_file):
                 if log_callback:
-                    log_callback(f"已忽略: {source_file.name} (垃圾文件)")
+                    log_callback(f"已忽略: {source_file.name}")
                 return "Skipped (Ignored)"
             
             # 2. 智能判断是否需要同步（传入子规则参数）
@@ -217,10 +217,7 @@ class FileSyncer:
             )
             if not should_sync:
                 if log_callback:
-                    if reason == "unchanged":
-                        log_callback(f"已跳过: {source_file.name} (文件未变更)")
-                    else:
-                        log_callback(f"已跳过: {source_file.name} ({reason})")
+                    log_callback(f"已跳过: {source_file.name}")
                 return "Skipped (Unchanged)"
             
             # 3. 静默期检测
@@ -287,7 +284,9 @@ class FileSyncer:
         rule_size_diff: bool = False,
         rule_mtime_newer: bool = False,
         thread_count: int = 1,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        progress_callback: Optional[Callable[[dict], None]] = None,
+        is_slow_storage: bool = False
     ) -> dict:
         """
         同步整个目录（支持多线程，固定递归模式，支持子规则）
@@ -299,6 +298,8 @@ class FileSyncer:
             rule_mtime_newer: 子规刑3 - 源文件修改时间更新时同步
             thread_count: 线程数（1=单线程，>1=多线程）
             log_callback: 日志回调函数
+            progress_callback: 进度回调函数
+            is_slow_storage: 是否为慢速存储（会启用重试机制）
             
         Returns:
             同步统计信息字典
@@ -338,6 +339,9 @@ class FileSyncer:
                     log_callback
                 )
                 self._update_stats(stats, result)
+                # 调用进度回调
+                if progress_callback:
+                    progress_callback(stats)
         
         # 多线程模式
         else:
@@ -362,22 +366,19 @@ class FileSyncer:
                     try:
                         result = future.result()
                         self._update_stats(stats, result)
+                        # 调用进度回调
+                        if progress_callback:
+                            progress_callback(stats)
                     except Exception as e:
                         source_file, target_file = future_to_file[future]
                         if log_callback:
                             log_callback(f"线程处理失败: {source_file.name} - {str(e)}")
                         stats["failed"] += 1
+                        # 失败也要更新进度
+                        if progress_callback:
+                            progress_callback(stats)
         
-        if log_callback:
-            log_callback(
-                f"\n同步完成！"
-                f"\n  总文件数: {stats['total']}"
-                f"\n  成功: {stats['success']}"
-                f"\n  跳过(垃圾): {stats['skipped_ignored']}"
-                f"\n  跳过(活动): {stats['skipped_active']}"
-                f"\n  跳过(未变更): {stats['skipped_unchanged']}"
-                f"\n  失败: {stats['failed']}"
-            )
+        # 不再在这里输出详细统计，统计信息将在调度器层面汇总输出
         
         return stats
     

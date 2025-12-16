@@ -9,8 +9,11 @@ import os
 import psutil
 import threading
 import logging
+from logging.handlers import RotatingFileHandler
 import requests
-from datetime import datetime
+import glob
+import time
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
 
@@ -24,11 +27,69 @@ from version import __version__
 VERSION = __version__
 
 # 配置日志格式
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s: %(message)s',
+# 确保日志目录存在
+log_dir = Path('logs')
+log_dir.mkdir(exist_ok=True)
+
+# 从环境变量读取日志级别配置
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()  # 文件日志级别
+CONSOLE_LEVEL = os.getenv('CONSOLE_LEVEL', 'INFO').upper()  # 控制台日志级别
+LOG_SAVE_DAYS = int(os.getenv('LOG_SAVE_DAYS', '7'))  # 日志保留天数
+
+# 配置 root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)  # 设置为 DEBUG 以捕捉所有级别
+
+# 文件 handler - 保存所有日志
+file_handler = RotatingFileHandler(
+    log_dir / 'cloudgather.log',
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5,
+    encoding='utf-8'
+)
+file_handler.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+file_formatter = logging.Formatter(
+    '[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+file_handler.setFormatter(file_formatter)
+root_logger.addHandler(file_handler)
+
+# 控制台 handler - 只显示业务日志
+console_handler = logging.StreamHandler()
+console_handler.setLevel(getattr(logging, CONSOLE_LEVEL, logging.INFO))
+console_formatter = logging.Formatter(
+    '[%(asctime)s] %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+console_handler.setFormatter(console_formatter)
+root_logger.addHandler(console_handler)
+
+
+def cleanup_old_logs():
+    """清理过期日志文件"""
+    try:
+        cutoff_time = time.time() - (LOG_SAVE_DAYS * 86400)  # 转换为秒
+        log_files = glob.glob(str(log_dir / 'cloudgather.log.*'))
+        
+        removed_count = 0
+        for log_file in log_files:
+            try:
+                file_path = Path(log_file)
+                if file_path.stat().st_mtime < cutoff_time:
+                    file_path.unlink()
+                    removed_count += 1
+            except Exception as e:
+                logging.warning(f"删除过期日志失败: {log_file} - {e}")
+        
+        if removed_count > 0:
+            logging.info(f"✅ 已清理 {removed_count} 个过期日志文件")
+    except Exception as e:
+        logging.error(f"清理日志失败: {e}")
+
+
+# 启动时清理一次过期日志
+cleanup_old_logs()
 
 # 环境适配：判断是否在 Docker 环境中
 IS_DOCKER = os.getenv('IS_DOCKER', 'false').lower() == 'true'
@@ -84,23 +145,10 @@ ensure_scheduler_running()
 # Flask 应用
 app = Flask(__name__, static_folder='static', template_folder='html')
 
-# 配置 Flask 访问日志格式
-import logging
-from logging import Formatter
-
-class TimestampedFormatter(Formatter):
-    def format(self, record):
-        # 为访问日志添加时间戳
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return f'[{timestamp}] {record.getMessage()}'
-
-# 设置 werkzeug 日志格式
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-handler.setFormatter(TimestampedFormatter())
-log.handlers = [handler]
-log.propagate = False  # 关闭向 root logger 凒泡，避免重复输出
+# 设置 Werkzeug 日志：将 HTTP 访问日志压低到 WARNING 级别
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.setLevel(logging.WARNING)  # 只显示警告和错误
+werkzeug_logger.propagate = True  # 传递到 root logger，确保警告/错误会被记录到文件
 
 
 @app.route('/')
@@ -116,6 +164,15 @@ def _task_to_dict(task: SyncTask) -> dict:
         data['next_run_time'] = next_run_time.isoformat()
     else:
         data['next_run_time'] = None
+    
+    # 添加任务进度（如果正在执行）
+    if task.status.value == 'RUNNING' and task.id in scheduler.task_progress:
+        data['progress'] = scheduler.task_progress[task.id]
+    
+    # 添加最终统计信息（如果有）
+    if task.id in scheduler.task_stats:
+        data['stats'] = scheduler.task_stats[task.id]
+    
     return data
 
 
@@ -277,7 +334,8 @@ def api_tasks():
             thread_count=int(data.get('thread_count', 1)),
             rule_not_exists=_parse_bool(data.get('rule_not_exists', False), False),
             rule_size_diff=_parse_bool(data.get('rule_size_diff', False), False),
-            rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False)
+            rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False),
+            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False)
         )
     else:
         # 间隔调度
@@ -300,7 +358,8 @@ def api_tasks():
             thread_count=int(data.get('thread_count', 1)),
             rule_not_exists=_parse_bool(data.get('rule_not_exists', False), False),
             rule_size_diff=_parse_bool(data.get('rule_size_diff', False), False),
-            rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False)
+            rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False),
+            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False)
         )
 
     if scheduler.add_task(task):
@@ -348,6 +407,8 @@ def api_task_detail(task_id: str):
         updates['rule_size_diff'] = _parse_bool(data['rule_size_diff'], task.rule_size_diff)
     if 'rule_mtime_newer' in data:
         updates['rule_mtime_newer'] = _parse_bool(data['rule_mtime_newer'], task.rule_mtime_newer)
+    if 'is_slow_storage' in data:
+        updates['is_slow_storage'] = _parse_bool(data['is_slow_storage'], task.is_slow_storage)
 
     # 路径更新时校验并创建目标目录
     if 'source_path' in updates or 'target_path' in updates:

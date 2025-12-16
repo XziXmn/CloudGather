@@ -530,6 +530,22 @@
                         </p>
                     </div>
                     
+                    <!-- 慢速存储选项 -->
+                    <div class="md:col-span-2">
+                        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
+                            <input type="checkbox" id="isSlowStorage" class="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-400">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2">
+                                    <i class="fas fa-hdd text-orange-500"></i>
+                                    <span class="font-medium text-gray-700">目标是 NAS/网盘挂载（慢速存储）</span>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-1">
+                                    开启后将自动限制线程数为 2-4，并增加超时时间和重试次数，适用于 NAS 或网盘挂载目录
+                                </p>
+                            </div>
+                        </label>
+                    </div>
+                    
                     <!-- Cron 调度配置 -->
                     <div id="cronConfig" class="md:col-span-2">
                         <label class="block text-sm text-gray-600 mb-2">

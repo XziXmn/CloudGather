@@ -7,6 +7,7 @@ services:
     volumes:
       # 配置文件持久化（必需）
       - '/vol1/1000/appdata/cloudgather:/app/config'
+      - /vol1/1000/appdata/cloudgather/logs:/app/logs
       - '/vol1/1000/data:/data'
       - '/vol02/1000-0-dfac5347/测试:/测试'
       # 挂载源目录和目标目录（根据实际需求修改路径）
@@ -26,6 +27,10 @@ services:
       - PUID=1000         # 运行用户 ID（根据实际情况修改）
       - PGID=1001         # 运行用户组 ID（根据实际情况修改）
       - UMASK=022         # 文件创建掩码（根据实际情况修改）
+      # 日志策略配置
+      - LOG_LEVEL=INFO           # 文件日志级别 (DEBUG, INFO, WARNING, ERROR)
+      - CONSOLE_LEVEL=INFO       # 控制台日志级别 (DEBUG, INFO, WARNING, ERROR)
+      - LOG_SAVE_DAYS=7          # 日志保留天数，超过此天数的日志将被自动清理
     
     restart: always
     network_mode: bridge

@@ -38,6 +38,8 @@ class TaskScheduler:
         self.is_running = False
         self.log_callback: Optional[Callable[[str], None]] = None
         self.task_context_callback: Optional[Callable[[Optional[str]], None]] = None  # 任务上下文回调
+        self.task_progress: Dict[str, dict] = {}  # 任务进度缓存: task_id -> progress_info
+        self.task_stats: Dict[str, dict] = {}  # 任务最终统计信息: task_id -> stats
         
         # 确保配置目录存在
         try:
@@ -80,6 +82,27 @@ class TaskScheduler:
         """
         if self.log_callback:
             self.log_callback(message)
+    
+    def _update_progress(self, task_id: str, stats: dict):
+        """
+        更新任务进度
+        
+        Args:
+            task_id: 任务ID
+            stats: 同步统计信息
+        """
+        done = stats["success"] + stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"] + stats["failed"]
+        total = stats["total"]
+        percent = (done / total * 100) if total > 0 else 0
+        
+        self.task_progress[task_id] = {
+            "done": done,
+            "total": total,
+            "success": stats["success"],
+            "skipped": stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"],
+            "failed": stats["failed"],
+            "percent": round(percent, 1)
+        }
     
     def _ensure_config_file(self):
         """确保配置文件存在，若缺失则创建空文件"""
@@ -390,16 +413,29 @@ class TaskScheduler:
                         rule_size_diff=task.rule_size_diff,
                         rule_mtime_newer=task.rule_mtime_newer,
                         thread_count=task.thread_count,
-                        log_callback=self._log
+                        log_callback=self._log,
+                        progress_callback=lambda s: self._update_progress(task_id, s),
+                        is_slow_storage=task.is_slow_storage
                     )
                     
                     # 更新状态为 IDLE
                     task.update_status(TaskStatus.IDLE)
                     task.update_last_run_time()
                     
+                    # 保存最终统计信息
+                    total_skipped = stats['skipped_ignored'] + stats['skipped_active'] + stats['skipped_unchanged']
+                    self.task_stats[task_id] = {
+                        "total": stats['total'],
+                        "success": stats['success'],
+                        "skipped": total_skipped,
+                        "failed": stats['failed']
+                    }
+                    
                     self._log(
                         f"✓ 任务执行完成: {task.name} "
-                        f"(成功: {stats['success']}, "
+                        f"(总文件数: {stats['total']} "
+                        f"成功: {stats['success']} "
+                        f"跳过: {total_skipped} "
                         f"失败: {stats['failed']})"
                     )
                     
@@ -411,6 +447,9 @@ class TaskScheduler:
                     self._log(f"错误详情: {traceback.format_exc()}")
                 
                 finally:
+                    # 清除任务进度缓存
+                    self.task_progress.pop(task_id, None)
+                    
                     # 清除任务上下文
                     if self.task_context_callback:
                         self.task_context_callback(None)
