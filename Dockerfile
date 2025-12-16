@@ -44,7 +44,7 @@ EXPOSE 8080
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/status')" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:3602/api/status')" || exit 1
 
 # 使用 entrypoint 脚本
 ENTRYPOINT ["/entrypoint.sh"]

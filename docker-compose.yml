@@ -19,7 +19,7 @@ services:
       # - '/mnt/target:/target'
     
     ports:
-      - '3602:8080'
+      - '3602:3602'
     
     environment:
       - TZ=Asia/Shanghai  # 时区设置
@@ -37,7 +37,7 @@ services:
     
     # 健康检查
     healthcheck:
-      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://localhost:8080/api/status")']
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://localhost:3602/api/status")']
       interval: 30s
       timeout: 3s
       retries: 3

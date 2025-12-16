@@ -699,13 +699,13 @@ if __name__ == '__main__':
         # 启动信息
         print(f'\n✅ CloudGather v{VERSION} 启动成功')
         print(f'⏰ 时区: {os.getenv("TZ", "UTC")}')
-        print(f'🌐 访问地址: http://127.0.0.1:8080')
+        print(f'🌐 访问地址: http://127.0.0.1:3602')
         print(f'💬 一言: {hitokoto}')
         print('▶️  服务运行中... (按 CTRL+C 停止)\n')
     
     # 启动 Flask
     app.run(
         host='0.0.0.0' if IS_DOCKER else '127.0.0.1',
-        port=8080,
+        port=3602,
         debug=not IS_DOCKER
     )

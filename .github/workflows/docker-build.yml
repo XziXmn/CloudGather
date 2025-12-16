@@ -39,26 +39,31 @@ jobs:
       - name: Extract metadata
         id: meta
         run: |
-          # 提取版本号
-          VERSION="0.3"
+          # 从 version.py 文件读取版本号
+          VERSION=$(python3 -c "exec(open('version.py').read()); print(__version__)")
           
-          # 确定标签
+          # 确定标签和是否推送版本号
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             # 如果是 tag 推送，使用 tag 名称
             TAG=${GITHUB_REF#refs/tags/}
+            PUSH_VERSION="true"
           elif [[ $GITHUB_REF == refs/heads/main ]]; then
-            # main 分支推送为 latest
+            # main 分支推送为 latest + 版本号
             TAG="latest"
+            PUSH_VERSION="true"
           elif [[ $GITHUB_REF == refs/heads/dev ]]; then
-            # dev 分支推送为 beta
+            # dev 分支只推送 beta，不推版本号
             TAG="beta"
+            PUSH_VERSION="false"
           else
             # 其他情况使用 commit SHA
             TAG="sha-${GITHUB_SHA::8}"
+            PUSH_VERSION="false"
           fi
           
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "push_version=${PUSH_VERSION}" >> $GITHUB_OUTPUT
           echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
       
       - name: Build and push
@@ -69,7 +74,7 @@ jobs:
           push: true
           tags: |
             ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
-            ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:v${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.push_version == 'true' && format('{0}/{1}:v{2}', env.DOCKER_USERNAME, env.IMAGE_NAME, steps.meta.outputs.version) || '' }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
