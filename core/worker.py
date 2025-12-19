@@ -186,7 +186,11 @@ class FileSyncer:
         rule_not_exists: bool = False,
         rule_size_diff: bool = False,
         rule_mtime_newer: bool = False,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        size_min_bytes: Optional[int] = None,
+        size_max_bytes: Optional[int] = None,
+        suffix_mode: str = "NONE",
+        suffix_list: Optional[list[str]] = None
     ) -> str:
         """
         同步单个文件（原子化写入，支持子规则）
@@ -210,7 +214,47 @@ class FileSyncer:
                     log_callback(f"已忽略: {source_file.name}")
                 return "Skipped (Ignored)"
             
-            # 2. 智能判断是否需要同步（传入子规则参数）
+            # 2. 后缀过滤
+            mode = (suffix_mode or "NONE").upper()
+            if mode != "NONE":
+                ext = source_file.suffix.lower().lstrip(".")
+                suffixes = [s.lower().lstrip(".") for s in suffix_list] if suffix_list else []
+                if mode == "INCLUDE":
+                    if not ext or ext not in suffixes:
+                        if log_callback:
+                            log_callback(f"已按后缀规则跳过: {source_file.name} (mode=INCLUDE, ext={ext or '-'})")
+                        return "Skipped (Filtered)"
+                elif mode == "EXCLUDE":
+                    if ext and ext in suffixes:
+                        if log_callback:
+                            log_callback(f"已按后缀规则跳过: {source_file.name} (mode=EXCLUDE, ext={ext})")
+                        return "Skipped (Filtered)"
+            
+            # 3. 大小过滤
+            if size_min_bytes is not None or size_max_bytes is not None:
+                try:
+                    size = source_file.stat().st_size
+                except Exception as e:
+                    size = None
+                    if log_callback:
+                        log_callback(f"无法获取文件大小，将跳过过滤规则: {source_file.name} - {str(e)}")
+                if size is not None:
+                    if size_min_bytes is not None and size < size_min_bytes:
+                        if log_callback:
+                            log_callback(
+                                f"已按大小规则跳过: {source_file.name} "
+                                f"({self._format_size(size)} < 最小 {self._format_size(size_min_bytes)})"
+                            )
+                        return "Skipped (Filtered)"
+                    if size_max_bytes is not None and size > size_max_bytes:
+                        if log_callback:
+                            log_callback(
+                                f"已按大小规则跳过: {source_file.name} "
+                                f"({self._format_size(size)} > 最大 {self._format_size(size_max_bytes)})"
+                            )
+                        return "Skipped (Filtered)"
+            
+            # 4. 智能判断是否需要同步（传入子规则参数）
             should_sync, reason = self.should_sync_file(
                 source_file, target_file, overwrite_existing,
                 rule_not_exists, rule_size_diff, rule_mtime_newer
@@ -220,7 +264,7 @@ class FileSyncer:
                     log_callback(f"已跳过: {source_file.name}")
                 return "Skipped (Unchanged)"
             
-            # 3. 静默期检测
+            # 5. 静默期检测
             is_stable, file_size = self.check_file_stability(source_file, log_callback)
             if not is_stable:
                 if log_callback:
@@ -286,7 +330,11 @@ class FileSyncer:
         thread_count: int = 1,
         log_callback: Optional[Callable[[str], None]] = None,
         progress_callback: Optional[Callable[[dict], None]] = None,
-        is_slow_storage: bool = False
+        is_slow_storage: bool = False,
+        size_min_bytes: Optional[int] = None,
+        size_max_bytes: Optional[int] = None,
+        suffix_mode: str = "NONE",
+        suffix_list: Optional[list[str]] = None
     ) -> dict:
         """
         同步整个目录（支持多线程，固定递归模式，支持子规则）
@@ -300,6 +348,10 @@ class FileSyncer:
             log_callback: 日志回调函数
             progress_callback: 进度回调函数
             is_slow_storage: 是否为慢速存储（会启用重试机制）
+            size_min_bytes: 最小文件大小（字节），None 表示不限制
+            size_max_bytes: 最大文件大小（字节），None 表示不限制
+            suffix_mode: 后缀过滤模式：NONE/INCLUDE/EXCLUDE
+            suffix_list: 后缀列表，小写且不带点，如 ["mp4", "mkv"]
             
         Returns:
             同步统计信息字典
@@ -309,6 +361,7 @@ class FileSyncer:
             "skipped_ignored": 0,
             "skipped_active": 0,
             "skipped_unchanged": 0,
+            "skipped_filtered": 0,
             "failed": 0,
             "total": 0
         }
@@ -336,7 +389,11 @@ class FileSyncer:
                 result = self.sync_file(
                     source_file, target_file, overwrite_existing,
                     rule_not_exists, rule_size_diff, rule_mtime_newer,
-                    log_callback
+                    log_callback,
+                    size_min_bytes=size_min_bytes,
+                    size_max_bytes=size_max_bytes,
+                    suffix_mode=suffix_mode,
+                    suffix_list=suffix_list
                 )
                 self._update_stats(stats, result)
                 # 调用进度回调
@@ -356,7 +413,11 @@ class FileSyncer:
                         rule_not_exists,
                         rule_size_diff,
                         rule_mtime_newer,
-                        log_callback
+                        log_callback,
+                        size_min_bytes,
+                        size_max_bytes,
+                        suffix_mode,
+                        suffix_list
                     ): (source_file, target_file)
                     for source_file, target_file in file_tasks
                 }
@@ -399,6 +460,8 @@ class FileSyncer:
             stats["skipped_active"] += 1
         elif result == "Skipped (Unchanged)":
             stats["skipped_unchanged"] += 1
+        elif result == "Skipped (Filtered)":
+            stats["skipped_filtered"] += 1
         elif result == "Failed":
             stats["failed"] += 1
     

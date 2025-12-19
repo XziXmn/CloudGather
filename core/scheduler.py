@@ -91,7 +91,7 @@ class TaskScheduler:
             task_id: 任务ID
             stats: 同步统计信息
         """
-        done = stats["success"] + stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"] + stats["failed"]
+        done = stats["success"] + stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"] + stats.get("skipped_filtered", 0) + stats["failed"]
         total = stats["total"]
         percent = (done / total * 100) if total > 0 else 0
         
@@ -99,7 +99,7 @@ class TaskScheduler:
             "done": done,
             "total": total,
             "success": stats["success"],
-            "skipped": stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"],
+            "skipped": stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"] + stats.get("skipped_filtered", 0),
             "failed": stats["failed"],
             "percent": round(percent, 1)
         }
@@ -415,7 +415,11 @@ class TaskScheduler:
                         thread_count=task.thread_count,
                         log_callback=self._log,
                         progress_callback=lambda s: self._update_progress(task_id, s),
-                        is_slow_storage=task.is_slow_storage
+                        is_slow_storage=task.is_slow_storage,
+                        size_min_bytes=task.size_min_bytes,
+                        size_max_bytes=task.size_max_bytes,
+                        suffix_mode=task.suffix_mode,
+                        suffix_list=task.suffix_list
                     )
                     
                     # 更新状态为 IDLE
@@ -423,12 +427,13 @@ class TaskScheduler:
                     task.update_last_run_time()
                     
                     # 保存最终统计信息
-                    total_skipped = stats['skipped_ignored'] + stats['skipped_active'] + stats['skipped_unchanged']
+                    total_skipped = stats['skipped_ignored'] + stats['skipped_active'] + stats['skipped_unchanged'] + stats.get('skipped_filtered', 0)
                     self.task_stats[task_id] = {
                         "total": stats['total'],
                         "success": stats['success'],
                         "skipped": total_skipped,
-                        "failed": stats['failed']
+                        "failed": stats['failed'],
+                        "skipped_filtered": stats.get('skipped_filtered', 0)
                     }
                     
                     self._log(

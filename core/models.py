@@ -42,7 +42,11 @@ class SyncTask:
         rule_not_exists: bool = False,  # 子规则：文件不存在时同步
         rule_size_diff: bool = False,  # 子规则：大小不一致时同步
         rule_mtime_newer: bool = False,  # 子规则：源文件更新时同步
-        is_slow_storage: bool = False  # 目标是否为慢速存储（NAS/网盘挂载）
+        is_slow_storage: bool = False,  # 目标是否为慢速存储（NAS/网盘挂载）
+        size_min_bytes: Optional[int] = None,  # 最小文件大小（字节），None 表示不限制
+        size_max_bytes: Optional[int] = None,  # 最大文件大小（字节），None 表示不限制
+        suffix_mode: str = "NONE",  # 后缀过滤模式：NONE/INCLUDE/EXCLUDE
+        suffix_list: Optional[list[str]] = None  # 后缀列表，小写且不带点，如 ["mp4", "mkv"]
     ):
         """
         初始化同步任务
@@ -64,6 +68,10 @@ class SyncTask:
             rule_size_diff: 子规则 - 大小不一致时同步
             rule_mtime_newer: 子规则 - 源文件更新时同步
             is_slow_storage: 目标是否为慢速存储（NAS/网盘挂载）
+            size_min_bytes: 最小文件大小（字节），None 表示不限制
+            size_max_bytes: 最大文件大小（字节），None 表示不限制
+            suffix_mode: 后缀过滤模式：NONE（默认）/INCLUDE/EXCLUDE
+            suffix_list: 后缀列表（字符串数组），例如 ["mp4", "mkv"]
         """
         self.id = task_id if task_id else str(uuid.uuid4())
         self.name = name
@@ -86,6 +94,11 @@ class SyncTask:
         self.rule_not_exists = rule_not_exists
         self.rule_size_diff = rule_size_diff
         self.rule_mtime_newer = rule_mtime_newer
+        self.size_min_bytes = size_min_bytes
+        self.size_max_bytes = size_max_bytes
+        # 规范化后缀过滤配置
+        self.suffix_mode = (suffix_mode or "NONE").upper()
+        self.suffix_list = [s.lower().lstrip(".") for s in suffix_list] if suffix_list else None
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -111,7 +124,11 @@ class SyncTask:
             "rule_not_exists": self.rule_not_exists,
             "rule_size_diff": self.rule_size_diff,
             "rule_mtime_newer": self.rule_mtime_newer,
-            "is_slow_storage": self.is_slow_storage
+            "is_slow_storage": self.is_slow_storage,
+            "size_min_bytes": self.size_min_bytes,
+            "size_max_bytes": self.size_max_bytes,
+            "suffix_mode": self.suffix_mode,
+            "suffix_list": self.suffix_list
         }
     
     @classmethod
@@ -141,7 +158,11 @@ class SyncTask:
             rule_not_exists=data.get("rule_not_exists", False),
             rule_size_diff=data.get("rule_size_diff", False),
             rule_mtime_newer=data.get("rule_mtime_newer", False),
-            is_slow_storage=data.get("is_slow_storage", False)
+            is_slow_storage=data.get("is_slow_storage", False),
+            size_min_bytes=data.get("size_min_bytes"),
+            size_max_bytes=data.get("size_max_bytes"),
+            suffix_mode=data.get("suffix_mode", "NONE"),
+            suffix_list=data.get("suffix_list")
         )
     
     def update_status(self, new_status: TaskStatus):

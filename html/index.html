@@ -514,6 +514,38 @@
                         </p>
                     </div>
                     
+                    <!-- 过滤规则：文件大小 & 后缀 -->
+                    <div class="md:col-span-2">
+                        <label class="block text-sm text-gray-600 mb-2">过滤规则 <span class="text-xs text-gray-400">(可选，限制同步的文件范围)</span></label>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">文件大小范围 (MB)</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="number" id="sizeMinMb" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="最小值，如 100">
+                                    <span class="text-xs text-gray-400">至</span>
+                                    <input type="number" id="sizeMaxMb" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="最大值，留空不限制">
+                                </div>
+                                <p class="text-xs text-gray-500 mt-1">
+                                    <i class="fas fa-info-circle"></i> 仅在设置时生效，可单独填写最小或最大值。
+                                </p>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">文件后缀过滤</label>
+                                <div class="flex items-center gap-2 mb-2">
+                                    <select id="suffixMode" class="w-40 px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                                        <option value="NONE" selected>不过滤</option>
+                                        <option value="INCLUDE">仅允许以下后缀</option>
+                                        <option value="EXCLUDE">排除以下后缀</option>
+                                    </select>
+                                    <input type="text" id="suffixList" class="flex-1 px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="例如：mp4,mkv,avi">
+                                </div>
+                                <p class="text-xs text-gray-500">
+                                    <i class="fas fa-info-circle"></i> 多个后缀用逗号分隔，不需要带点，例如 mp4,mkv。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- 线程数配置 -->
                     <div class="md:col-span-2">
                         <label class="block text-sm text-gray-600 mb-2">

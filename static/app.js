@@ -263,6 +263,9 @@ function renderTasks(tasks) {
         let statsInfo = '';
         if (task.stats) {
             const s = task.stats;
+            const filteredInfo = typeof s.skipped_filtered === 'number' && s.skipped_filtered > 0
+                ? `<span><i class="fas fa-filter mr-1"></i>过滤: ${s.skipped_filtered}</span>`
+                : '';
             statsInfo = `
                 <div class="mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded text-xs">
                     <div class="flex items-center gap-3 text-gray-600 dark:text-gray-400">
@@ -270,9 +273,31 @@ function renderTasks(tasks) {
                         <span><i class="fas fa-check text-green-500 mr-1"></i>成功: ${s.success}</span>
                         <span><i class="fas fa-forward text-yellow-500 mr-1"></i>跳过: ${s.skipped}</span>
                         <span><i class="fas fa-times text-red-500 mr-1"></i>失败: ${s.failed}</span>
+                        ${filteredInfo}
                     </div>
                 </div>
             `;
+        }
+        
+        // 过滤规则概览
+        let filterInfo = '';
+        const filterParts = [];
+        if (typeof task.size_min_bytes === 'number') {
+            filterParts.push(`≥ ${Math.round(task.size_min_bytes / (1024 * 1024))} MB`);
+        }
+        if (typeof task.size_max_bytes === 'number') {
+            filterParts.push(`≤ ${Math.round(task.size_max_bytes / (1024 * 1024))} MB`);
+        }
+        if (task.suffix_mode && task.suffix_mode !== 'NONE') {
+            const list = Array.isArray(task.suffix_list) ? task.suffix_list.join(',') : '';
+            if (task.suffix_mode === 'INCLUDE') {
+                filterParts.push(`仅 [${list}]`);
+            } else if (task.suffix_mode === 'EXCLUDE') {
+                filterParts.push(`排除 [${list}]`);
+            }
+        }
+        if (filterParts.length > 0) {
+            filterInfo = `<div class="text-xs text-gray-500 mt-1"><i class="fas fa-filter mr-1"></i>过滤: ${filterParts.join('；')}</div>`;
         }
         
         return `
@@ -299,6 +324,7 @@ function renderTasks(tasks) {
                     <span class="mx-1 text-gray-400">→</span>
                     <div class="flex items-center"><i class="fas fa-folder text-green-500 mr-2"></i><span class="font-mono">${task.target_path}</span></div>
                 </div>
+                ${filterInfo}
             </div>
             <div class="flex items-center gap-4 text-sm text-gray-600 mb-3">
                 ${scheduleInfo}
@@ -435,6 +461,16 @@ function showAddTaskModal() {
     document.getElementById('modalTitle').textContent = '添加任务';
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
+    
+    // 重置过滤规则
+    const sizeMinInput = document.getElementById('sizeMinMb');
+    const sizeMaxInput = document.getElementById('sizeMaxMb');
+    const suffixModeSelect = document.getElementById('suffixMode');
+    const suffixListInput = document.getElementById('suffixList');
+    if (sizeMinInput) sizeMinInput.value = '';
+    if (sizeMaxInput) sizeMaxInput.value = '';
+    if (suffixModeSelect) suffixModeSelect.value = 'NONE';
+    if (suffixListInput) suffixListInput.value = '';
     
     // 重置子规则按钮状态（默认启用「文件不存在」规则）
     ['ruleNotExists', 'ruleSizeDiff', 'ruleMtimeNewer'].forEach(id => {
@@ -619,6 +655,28 @@ async function editTask(taskId) {
             slowStorageCheckbox.checked = task.is_slow_storage || false;
         }
         
+        // 填充过滤规则
+        const sizeMinInput = document.getElementById('sizeMinMb');
+        const sizeMaxInput = document.getElementById('sizeMaxMb');
+        const suffixModeSelect = document.getElementById('suffixMode');
+        const suffixListInput = document.getElementById('suffixList');
+        if (sizeMinInput) {
+            sizeMinInput.value = typeof task.size_min_bytes === 'number' ? Math.round(task.size_min_bytes / (1024 * 1024)) : '';
+        }
+        if (sizeMaxInput) {
+            sizeMaxInput.value = typeof task.size_max_bytes === 'number' ? Math.round(task.size_max_bytes / (1024 * 1024)) : '';
+        }
+        if (suffixModeSelect) {
+            suffixModeSelect.value = (task.suffix_mode || 'NONE').toUpperCase();
+        }
+        if (suffixListInput) {
+            if (Array.isArray(task.suffix_list)) {
+                suffixListInput.value = task.suffix_list.join(',');
+            } else {
+                suffixListInput.value = '';
+            }
+        }
+        
         // 填充 Cron 表达式
         document.getElementById('cronExpression').value = task.cron_expression || '';
         validateCron();
@@ -647,6 +705,39 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         is_slow_storage: document.getElementById('isSlowStorage') ? document.getElementById('isSlowStorage').checked : false,
         enabled: true  // 默认启用，后续可通过开关控制
     };
+    
+    // 组装过滤规则
+    const sizeMinInput = document.getElementById('sizeMinMb');
+    const sizeMaxInput = document.getElementById('sizeMaxMb');
+    const suffixModeSelect = document.getElementById('suffixMode');
+    const suffixListInput = document.getElementById('suffixList');
+    if (sizeMinInput && sizeMinInput.value !== '') {
+        const v = parseFloat(sizeMinInput.value);
+        if (!Number.isNaN(v) && v >= 0) {
+            taskData.size_min_bytes = Math.round(v * 1024 * 1024);
+        }
+    }
+    if (sizeMaxInput && sizeMaxInput.value !== '') {
+        const v = parseFloat(sizeMaxInput.value);
+        if (!Number.isNaN(v) && v >= 0) {
+            taskData.size_max_bytes = Math.round(v * 1024 * 1024);
+        }
+    }
+    if (suffixModeSelect) {
+        const mode = suffixModeSelect.value || 'NONE';
+        if (mode !== 'NONE') {
+            taskData.suffix_mode = mode;
+            if (suffixListInput && suffixListInput.value.trim() !== '') {
+                taskData.suffix_list = suffixListInput.value
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(s => s.length > 0)
+                    .map(s => s.replace(/^\./, ''));
+            } else {
+                taskData.suffix_list = [];
+            }
+        }
+    }
     
     if (!taskData.cron_expression) {
         showNotification('Cron 表达式不能为空', 'error');
@@ -679,7 +770,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskThreadCount'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskThreadCount', 'sizeMinMb', 'sizeMaxMb', 'suffixList'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {

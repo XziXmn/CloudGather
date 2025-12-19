@@ -347,7 +347,11 @@ def api_tasks():
             rule_not_exists=_parse_bool(data.get('rule_not_exists', False), False),
             rule_size_diff=_parse_bool(data.get('rule_size_diff', False), False),
             rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False),
-            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False)
+            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False),
+            size_min_bytes=data.get('size_min_bytes'),
+            size_max_bytes=data.get('size_max_bytes'),
+            suffix_mode=data.get('suffix_mode', 'NONE'),
+            suffix_list=data.get('suffix_list')
         )
     else:
         # 间隔调度
@@ -371,7 +375,11 @@ def api_tasks():
             rule_not_exists=_parse_bool(data.get('rule_not_exists', False), False),
             rule_size_diff=_parse_bool(data.get('rule_size_diff', False), False),
             rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False),
-            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False)
+            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False),
+            size_min_bytes=data.get('size_min_bytes'),
+            size_max_bytes=data.get('size_max_bytes'),
+            suffix_mode=data.get('suffix_mode', 'NONE'),
+            suffix_list=data.get('suffix_list')
         )
 
     if scheduler.add_task(task):
@@ -421,6 +429,14 @@ def api_task_detail(task_id: str):
         updates['rule_mtime_newer'] = _parse_bool(data['rule_mtime_newer'], task.rule_mtime_newer)
     if 'is_slow_storage' in data:
         updates['is_slow_storage'] = _parse_bool(data['is_slow_storage'], task.is_slow_storage)
+    if 'size_min_bytes' in data:
+        updates['size_min_bytes'] = data['size_min_bytes']
+    if 'size_max_bytes' in data:
+        updates['size_max_bytes'] = data['size_max_bytes']
+    if 'suffix_mode' in data:
+        updates['suffix_mode'] = (data['suffix_mode'] or 'NONE').upper()
+    if 'suffix_list' in data:
+        updates['suffix_list'] = data['suffix_list']
 
     # 路径更新时校验并创建目标目录
     if 'source_path' in updates or 'target_path' in updates:
