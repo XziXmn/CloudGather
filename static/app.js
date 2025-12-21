@@ -514,10 +514,12 @@ function showAddTaskModal() {
     const sizeMaxInput = document.getElementById('sizeMaxMb');
     const suffixModeSelect = document.getElementById('suffixMode');
     const suffixListInput = document.getElementById('suffixList');
+    const suffixPresetPanel = document.getElementById('suffixPresetPanel');
     if (sizeMinInput) sizeMinInput.value = '';
     if (sizeMaxInput) sizeMaxInput.value = '';
     if (suffixModeSelect) suffixModeSelect.value = 'NONE';
     if (suffixListInput) suffixListInput.value = '';
+    if (suffixPresetPanel) suffixPresetPanel.style.display = 'none';
     
     // 重置删除源文件设置
     const deleteSourceCheckbox = document.getElementById('deleteSource');
@@ -934,6 +936,39 @@ function initFormChangeListener() {
         };
         deleteParentCheckbox.addEventListener('change', syncDeleteParentControls);
         syncDeleteParentControls();
+    }
+    // 后缀输入框预设选择面板
+    const suffixListInput = document.getElementById('suffixList');
+    const suffixPresetPanel = document.getElementById('suffixPresetPanel');
+    if (suffixListInput && suffixPresetPanel) {
+        // 输入框获得焦点时显示面板
+        suffixListInput.addEventListener('focus', () => {
+            suffixPresetPanel.style.display = 'block';
+        });
+        
+        // 点击预设按钮时填充后缀
+        const presetButtons = suffixPresetPanel.querySelectorAll('button[data-suffixes]');
+        presetButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.preventDefault();
+                const suffixes = button.getAttribute('data-suffixes');
+                if (suffixes) {
+                    // 直接替换输入框内容，不合并
+                    suffixListInput.value = suffixes;
+                    // 触发 input 事件标记表单已修改
+                    suffixListInput.dispatchEvent(new Event('input'));
+                    // 隐藏面板
+                    suffixPresetPanel.style.display = 'none';
+                }
+            });
+        });
+        
+        // 点击其他地方时隐藏面板
+        document.addEventListener('click', (e) => {
+            if (!suffixListInput.contains(e.target) && !suffixPresetPanel.contains(e.target)) {
+                suffixPresetPanel.style.display = 'none';
+            }
+        });
     }
     ['deleteSource', 'deleteTimeBase', 'deleteParentDir'].forEach(id => {
         const el = document.getElementById(id);
