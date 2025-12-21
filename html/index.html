@@ -460,22 +460,39 @@
             </div>
             <form id="taskForm" class="space-y-4">
                 <input type="hidden" id="taskId">
+                <!-- 表单标签页 -->
+                <div class="border-b border-gray-200 mb-2">
+                    <nav class="flex gap-4 text-sm" aria-label="Tabs">
+                        <button type="button"
+                                id="taskTabBasic"
+                                class="px-3 py-2 border-b-2 border-blue-500 text-blue-600 font-medium"
+                                onclick="switchTaskTab('basic')">
+                            基础配置
+                        </button>
+                        <button type="button"
+                                id="taskTabAdvanced"
+                                class="px-3 py-2 border-b-2 border-transparent text-gray-500 hover:text-blue-600"
+                                onclick="switchTaskTab('advanced')">
+                            高级配置
+                        </button>
+                    </nav>
+                </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="md:col-span-2">
+                    <div class="md:col-span-2 task-tab-basic">
                         <label class="block text-sm text-gray-600 mb-2">任务名称 *</label>
                         <input type="text" id="taskName" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="例如：电影同步">
                     </div>
-                    <div>
+                    <div class="task-tab-basic">
                         <label class="block text-sm text-gray-600 mb-2">源目录 * <span class="text-xs text-gray-400">(输入后自动提示)</span></label>
                         <input type="text" id="taskSource" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/source/movies" autocomplete="off">
                     </div>
-                    <div>
+                    <div class="task-tab-basic">
                         <label class="block text-sm text-gray-600 mb-2">目标目录 * <span class="text-xs text-gray-400">(输入后自动提示)</span></label>
                         <input type="text" id="taskTarget" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/target/movies" autocomplete="off">
                     </div>
                     
                     <!-- 同步规则 -->
-                    <div class="md:col-span-2">
+                    <div class="md:col-span-2 task-tab-basic">
                         <label class="block text-sm text-gray-600 mb-3">同步策略 <span class="text-xs text-gray-400">(选择同步触发条件，可多选)</span></label>
                         <div class="flex flex-wrap gap-3 text-sm items-center">
                             <!-- 子规则1: 文件不存在 -->
@@ -515,39 +532,114 @@
                     </div>
                     
                     <!-- 过滤规则：文件大小 & 后缀 -->
-                    <div class="md:col-span-2">
-                        <label class="block text-sm text-gray-600 mb-2">过滤规则 <span class="text-xs text-gray-400">(可选，限制同步的文件范围)</span></label>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs text-gray-500 mb-1">文件大小范围 (MB)</label>
-                                <div class="flex items-center gap-2">
-                                    <input type="number" id="sizeMinMb" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="最小值，如 100">
-                                    <span class="text-xs text-gray-400">至</span>
-                                    <input type="number" id="sizeMaxMb" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="最大值，留空不限制">
+                    <div class="md:col-span-2 task-tab-advanced">
+                        <div class="border border-gray-200 rounded-lg p-4 bg-white dark:bg-gray-900 space-y-3">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h4 class="text-sm font-semibold text-gray-700">过滤规则</h4>
+                                    <p class="text-xs text-gray-500 mt-1">可选，用于限制参与同步的文件范围。</p>
                                 </div>
-                                <p class="text-xs text-gray-500 mt-1">
-                                    <i class="fas fa-info-circle"></i> 仅在设置时生效，可单独填写最小或最大值。
-                                </p>
                             </div>
-                            <div>
-                                <label class="block text-xs text-gray-500 mb-1">文件后缀过滤</label>
-                                <div class="flex items-center gap-2 mb-2">
-                                    <select id="suffixMode" class="w-40 px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
-                                        <option value="NONE" selected>不过滤</option>
-                                        <option value="INCLUDE">仅允许以下后缀</option>
-                                        <option value="EXCLUDE">排除以下后缀</option>
-                                    </select>
-                                    <input type="text" id="suffixList" class="flex-1 px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="例如：mp4,mkv,avi">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">文件大小范围 (MB)</label>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" id="sizeMinMb" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="最小值，如 100">
+                                        <span class="text-xs text-gray-400">至</span>
+                                        <input type="number" id="sizeMaxMb" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="最大值，留空不限制">
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <i class="fas fa-info-circle"></i> 仅在设置时生效，可单独填写最小或最大值。
+                                    </p>
                                 </div>
-                                <p class="text-xs text-gray-500">
-                                    <i class="fas fa-info-circle"></i> 多个后缀用逗号分隔，不需要带点，例如 mp4,mkv。
-                                </p>
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">文件后缀过滤</label>
+                                    <div class="flex flex-col md:flex-row items-stretch gap-2 mb-2">
+                                        <select id="suffixMode" class="w-full md:w-40 px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                                            <option value="NONE" selected>不过滤</option>
+                                            <option value="INCLUDE">仅允许以下后缀</option>
+                                            <option value="EXCLUDE">排除以下后缀</option>
+                                        </select>
+                                        <input type="text" id="suffixList" class="w-full md:flex-1 px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="例如：mp4,mkv,avi">
+                                    </div>
+                                    <p class="text-xs text-gray-500">
+                                        <i class="fas fa-info-circle"></i> 多个后缀用逗号分隔，不需要带点，例如 mp4,mkv。
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 删除源文件设置 -->
+                    <div class="md:col-span-2 task-tab-advanced">
+                        <div class="border border-gray-200 rounded-lg p-4 bg-white dark:bg-gray-900 space-y-3">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h4 class="text-sm font-semibold text-gray-700">删除源文件</h4>
+                                    <p class="text-xs text-gray-500 mt-1">可选，按时间策略自动清理源目录中的文件和目录。</p>
+                                </div>
+                            </div>
+                            <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
+                                <input type="checkbox" id="deleteSource" class="w-5 h-5 text-red-600 rounded focus:ring-2 focus:ring-red-400">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <i class="fas fa-trash-can text-red-500"></i>
+                                        <span class="font-medium text-gray-700">同步成功后删除源文件</span>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        仅在目标目录已成功写入文件后才会执行删除操作，删除操作按下方时间策略延迟执行。
+                                    </p>
+                                </div>
+                            </label>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 ml-1">
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">延迟时间 (天)</label>
+                                    <input type="number" id="deleteDelayDays" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="例如：7">
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <i class="fas fa-info-circle"></i> 0 表示同步完成后立即删除；留空时按 0 处理。
+                                    </p>
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">时间基准</label>
+                                    <select id="deleteTimeBase" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                                        <option value="SYNC_COMPLETE" selected>同步完成时间</option>
+                                        <option value="FILE_CREATE">源文件创建时间</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="space-y-3">
+                                <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
+                                    <input type="checkbox" id="deleteParentDir" class="w-5 h-5 text-red-600 rounded focus:ring-2 focus:ring-red-400">
+                                    <div class="flex-1">
+                                        <div class="flex items-center gap-2">
+                                            <i class="fas fa-folder-minus text-orange-500"></i>
+                                            <span class="font-medium text-gray-700">尝试删除上级目录</span>
+                                        </div>
+                                        <p class="text-xs text-gray-500 mt-1">
+                                            控制删除上级目录前文件名与目录名的最低相似程度，防止误删无关目录。满足相似度及安全检查后执行。
+                                        </p>
+                                    </div>
+                                </label>
+                                <div class="ml-1">
+                                    <label class="block text-xs text-gray-500 mb-2">相似度阈值（共同前缀占比）</label>
+                                    <div class="flex items-center gap-2">
+                                        <input type="range" id="deleteParentSimilarity" min="0" max="100" step="5" class="flex-1" value="60">
+                                        <span id="deleteParentSimilarityValue" class="text-xs text-gray-600 w-14 text-right">60%</span>
+                                    </div>
+                                    <div class="flex justify-between text-[10px] text-gray-400 px-1 mt-1">
+                                        <span>0%</span>
+                                        <span>25%</span>
+                                        <span>50%</span>
+                                        <span>75%</span>
+                                        <span>100%</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
                     
                     <!-- 线程数配置 -->
-                    <div class="md:col-span-2">
+                    <div class="md:col-span-2 task-tab-basic">
                         <label class="block text-sm text-gray-600 mb-2">
                             同步线程数 <span class="text-xs text-gray-400">(本地存储可多线程，网络存储建议单线程)</span>
                         </label>
@@ -563,7 +655,7 @@
                     </div>
                     
                     <!-- 网络云盘选项 -->
-                    <div class="md:col-span-2">
+                    <div class="md:col-span-2 task-tab-basic">
                         <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
                             <input type="checkbox" id="isSlowStorage" class="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-400">
                             <div class="flex-1">
@@ -579,7 +671,7 @@
                     </div>
                     
                     <!-- Cron 调度配置 -->
-                    <div id="cronConfig" class="md:col-span-2">
+                    <div id="cronConfig" class="md:col-span-2 task-tab-basic">
                         <label class="block text-sm text-gray-600 mb-2">
 Cron 表达式 * <span class="text-xs text-gray-400">(格式: 分 时 日 月 星期)</span></label>
                         <div class="flex gap-2 mb-2">

@@ -46,7 +46,12 @@ class SyncTask:
         size_min_bytes: Optional[int] = None,  # 最小文件大小（字节），None 表示不限制
         size_max_bytes: Optional[int] = None,  # 最大文件大小（字节），None 表示不限制
         suffix_mode: str = "NONE",  # 后缀过滤模式：NONE/INCLUDE/EXCLUDE
-        suffix_list: Optional[list[str]] = None  # 后缀列表，小写且不带点，如 ["mp4", "mkv"]
+        suffix_list: Optional[list[str]] = None,  # 后缀列表，小写且不带点，如 ["mp4", "mkv"]
+        delete_source: bool = False,  # 是否删除源文件
+        delete_delay_days: Optional[int] = None,  # 删除延迟天数，0 表示同步完成后立即删除
+        delete_time_base: str = "SYNC_COMPLETE",  # 删除时间基准：SYNC_COMPLETE / FILE_CREATE
+        delete_parent: bool = False,  # 是否同时尝试删除上级目录
+        delete_parent_similarity: int = 60  # 上级目录名与文件名共同前缀占比阈值(0-100)
     ):
         """
         初始化同步任务
@@ -99,6 +104,20 @@ class SyncTask:
         # 规范化后缀过滤配置
         self.suffix_mode = (suffix_mode or "NONE").upper()
         self.suffix_list = [s.lower().lstrip(".") for s in suffix_list] if suffix_list else None
+        # 删除源文件配置
+        self.delete_source = delete_source
+        self.delete_delay_days = delete_delay_days
+        self.delete_time_base = (delete_time_base or "SYNC_COMPLETE").upper()
+        self.delete_parent = delete_parent
+        try:
+            similarity = int(delete_parent_similarity)
+        except (TypeError, ValueError):
+            similarity = 60
+        if similarity < 0:
+            similarity = 0
+        if similarity > 100:
+            similarity = 100
+        self.delete_parent_similarity = similarity
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -128,7 +147,12 @@ class SyncTask:
             "size_min_bytes": self.size_min_bytes,
             "size_max_bytes": self.size_max_bytes,
             "suffix_mode": self.suffix_mode,
-            "suffix_list": self.suffix_list
+            "suffix_list": self.suffix_list,
+            "delete_source": self.delete_source,
+            "delete_delay_days": self.delete_delay_days,
+            "delete_time_base": self.delete_time_base,
+            "delete_parent": self.delete_parent,
+            "delete_parent_similarity": self.delete_parent_similarity
         }
     
     @classmethod
@@ -162,7 +186,12 @@ class SyncTask:
             size_min_bytes=data.get("size_min_bytes"),
             size_max_bytes=data.get("size_max_bytes"),
             suffix_mode=data.get("suffix_mode", "NONE"),
-            suffix_list=data.get("suffix_list")
+            suffix_list=data.get("suffix_list"),
+            delete_source=data.get("delete_source", False),
+            delete_delay_days=data.get("delete_delay_days"),
+            delete_time_base=data.get("delete_time_base", "SYNC_COMPLETE"),
+            delete_parent=data.get("delete_parent", False),
+            delete_parent_similarity=data.get("delete_parent_similarity", 60)
         )
     
     def update_status(self, new_status: TaskStatus):

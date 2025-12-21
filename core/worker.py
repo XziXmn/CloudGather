@@ -334,7 +334,8 @@ class FileSyncer:
         size_min_bytes: Optional[int] = None,
         size_max_bytes: Optional[int] = None,
         suffix_mode: str = "NONE",
-        suffix_list: Optional[list[str]] = None
+        suffix_list: Optional[list[str]] = None,
+        file_result_callback: Optional[Callable[[Path, Path, str], None]] = None
     ) -> dict:
         """
         同步整个目录（支持多线程，固定递归模式，支持子规则）
@@ -352,6 +353,7 @@ class FileSyncer:
             size_max_bytes: 最大文件大小（字节），None 表示不限制
             suffix_mode: 后缀过滤模式：NONE/INCLUDE/EXCLUDE
             suffix_list: 后缀列表，小写且不带点，如 ["mp4", "mkv"]
+            file_result_callback: 单文件处理结果回调，参数为 (source_file, target_file, result)
             
         Returns:
             同步统计信息字典
@@ -395,6 +397,8 @@ class FileSyncer:
                     suffix_mode=suffix_mode,
                     suffix_list=suffix_list
                 )
+                if file_result_callback:
+                    file_result_callback(source_file, target_file, result)
                 self._update_stats(stats, result)
                 # 调用进度回调
                 if progress_callback:
@@ -426,6 +430,9 @@ class FileSyncer:
                 for future in as_completed(future_to_file):
                     try:
                         result = future.result()
+                        source_file, target_file = future_to_file[future]
+                        if file_result_callback:
+                            file_result_callback(source_file, target_file, result)
                         self._update_stats(stats, result)
                         # 调用进度回调
                         if progress_callback:

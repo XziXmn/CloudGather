@@ -300,6 +300,22 @@ function renderTasks(tasks) {
             filterInfo = `<div class="text-xs text-gray-500 mt-1"><i class="fas fa-filter mr-1"></i>过滤: ${filterParts.join('；')}</div>`;
         }
         
+        // 删除源文件配置概览
+        let deleteInfo = '';
+        if (task.delete_source) {
+            const baseLabel = (task.delete_time_base || 'SYNC_COMPLETE') === 'FILE_CREATE' ? '创建时间' : '同步完成时间';
+            let delayLabel = '同步后立即删除';
+            if (typeof task.delete_delay_days === 'number' && task.delete_delay_days > 0) {
+                delayLabel = `${task.delete_delay_days} 天后删除`;
+            }
+            const parentLabel = task.delete_parent ? '，尝试删除上级目录' : '';
+            let similarityLabel = '';
+            if (typeof task.delete_parent_similarity === 'number') {
+                similarityLabel = `，相似度≥${task.delete_parent_similarity}%`;
+            }
+            deleteInfo = `<div class="text-xs text-red-500 mt-1"><i class="fas fa-trash-can mr-1"></i>${delayLabel}（基于${baseLabel}${parentLabel}${similarityLabel}）</div>`;
+        }
+        
         return `
         <div class="task-card" data-task-id="${task.id}">
             <div class="flex items-start justify-between mb-3">
@@ -325,6 +341,7 @@ function renderTasks(tasks) {
                     <div class="flex items-center"><i class="fas fa-folder text-green-500 mr-2"></i><span class="font-mono">${task.target_path}</span></div>
                 </div>
                 ${filterInfo}
+                ${deleteInfo}
             </div>
             <div class="flex items-center gap-4 text-sm text-gray-600 mb-3">
                 ${scheduleInfo}
@@ -443,6 +460,33 @@ function showNotification(message, type = 'info') {
     setTimeout(() => { notification.style.opacity = '0'; setTimeout(() => notification.remove(), 300); }, 3000);
 }
 
+function switchTaskTab(tab) {
+    const basicBtn = document.getElementById('taskTabBasic');
+    const advancedBtn = document.getElementById('taskTabAdvanced');
+    const basicItems = document.querySelectorAll('.task-tab-basic');
+    const advancedItems = document.querySelectorAll('.task-tab-advanced');
+
+    if (!basicBtn || !advancedBtn) return;
+
+    if (tab === 'advanced') {
+        basicBtn.classList.remove('border-blue-500', 'text-blue-600');
+        basicBtn.classList.add('border-transparent', 'text-gray-500');
+        advancedBtn.classList.remove('border-transparent', 'text-gray-500');
+        advancedBtn.classList.add('border-blue-500', 'text-blue-600');
+
+        basicItems.forEach(el => el.classList.add('hidden'));
+        advancedItems.forEach(el => el.classList.remove('hidden'));
+    } else {
+        advancedBtn.classList.remove('border-blue-500', 'text-blue-600');
+        advancedBtn.classList.add('border-transparent', 'text-gray-500');
+        basicBtn.classList.remove('border-transparent', 'text-gray-500');
+        basicBtn.classList.add('border-blue-500', 'text-blue-600');
+
+        basicItems.forEach(el => el.classList.remove('hidden'));
+        advancedItems.forEach(el => el.classList.add('hidden'));
+    }
+}
+
 function showAddTaskModal() {
     // 检查是否有草稿
     const draft = localStorage.getItem('task-draft');
@@ -462,6 +506,9 @@ function showAddTaskModal() {
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
     
+    // 默认切换到基础配置标签页
+    switchTaskTab('basic');
+    
     // 重置过滤规则
     const sizeMinInput = document.getElementById('sizeMinMb');
     const sizeMaxInput = document.getElementById('sizeMaxMb');
@@ -471,6 +518,25 @@ function showAddTaskModal() {
     if (sizeMaxInput) sizeMaxInput.value = '';
     if (suffixModeSelect) suffixModeSelect.value = 'NONE';
     if (suffixListInput) suffixListInput.value = '';
+    
+    // 重置删除源文件设置
+    const deleteSourceCheckbox = document.getElementById('deleteSource');
+    const deleteDelayInput = document.getElementById('deleteDelayDays');
+    const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
+    const deleteParentCheckbox = document.getElementById('deleteParentDir');
+    const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
+    const deleteParentSimilarityValue = document.getElementById('deleteParentSimilarityValue');
+    if (deleteSourceCheckbox) deleteSourceCheckbox.checked = false;
+    if (deleteDelayInput) deleteDelayInput.value = '';
+    if (deleteTimeBaseSelect) deleteTimeBaseSelect.value = 'SYNC_COMPLETE';
+    if (deleteParentCheckbox) deleteParentCheckbox.checked = false;
+    if (deleteParentSimilarityInput) {
+        deleteParentSimilarityInput.value = 60;
+        deleteParentSimilarityInput.disabled = true;
+    }
+    if (deleteParentSimilarityValue) {
+        deleteParentSimilarityValue.textContent = '60%';
+    }
     
     // 重置子规则按钮状态（默认启用「文件不存在」规则）
     ['ruleNotExists', 'ruleSizeDiff', 'ruleMtimeNewer'].forEach(id => {
@@ -677,9 +743,40 @@ async function editTask(taskId) {
             }
         }
         
+        // 删除源文件配置
+        const deleteSourceCheckbox = document.getElementById('deleteSource');
+        const deleteDelayInput = document.getElementById('deleteDelayDays');
+        const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
+        const deleteParentCheckbox = document.getElementById('deleteParentDir');
+        const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
+        const deleteParentSimilarityValue = document.getElementById('deleteParentSimilarityValue');
+        if (deleteSourceCheckbox) {
+            deleteSourceCheckbox.checked = !!task.delete_source;
+        }
+        if (deleteDelayInput) {
+            deleteDelayInput.value = typeof task.delete_delay_days === 'number' ? task.delete_delay_days : '';
+        }
+        if (deleteTimeBaseSelect) {
+            deleteTimeBaseSelect.value = (task.delete_time_base || 'SYNC_COMPLETE').toUpperCase();
+        }
+        if (deleteParentCheckbox) {
+            deleteParentCheckbox.checked = !!task.delete_parent;
+        }
+        if (deleteParentSimilarityInput) {
+            const sim = typeof task.delete_parent_similarity === 'number' ? task.delete_parent_similarity : 60;
+            deleteParentSimilarityInput.value = sim;
+            deleteParentSimilarityInput.disabled = !deleteParentCheckbox || !deleteParentCheckbox.checked;
+        }
+        if (deleteParentSimilarityValue && deleteParentSimilarityInput) {
+            deleteParentSimilarityValue.textContent = `${deleteParentSimilarityInput.value}%`;
+        }
+        
         // 填充 Cron 表达式
         document.getElementById('cronExpression').value = task.cron_expression || '';
         validateCron();
+        
+        // 编辑时默认展示基础配置标签页
+        switchTaskTab('basic');
         
         document.getElementById('taskModal').classList.add('show');
         initDirectoryAutocomplete();
@@ -739,6 +836,36 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         }
     }
     
+    // 删除源文件配置
+    const deleteSourceCheckbox = document.getElementById('deleteSource');
+    const deleteDelayInput = document.getElementById('deleteDelayDays');
+    const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
+    const deleteParentCheckbox = document.getElementById('deleteParentDir');
+    const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
+    if (deleteSourceCheckbox && deleteSourceCheckbox.checked) {
+        taskData.delete_source = true;
+        if (deleteDelayInput && deleteDelayInput.value !== '') {
+            const dv = parseInt(deleteDelayInput.value, 10);
+            if (!Number.isNaN(dv)) {
+                taskData.delete_delay_days = dv;
+            }
+        }
+        if (deleteTimeBaseSelect && deleteTimeBaseSelect.value) {
+            taskData.delete_time_base = deleteTimeBaseSelect.value;
+        }
+        if (deleteParentCheckbox && deleteParentCheckbox.checked) {
+            taskData.delete_parent = true;
+        }
+        if (deleteParentSimilarityInput && !deleteParentSimilarityInput.disabled) {
+            const sv = parseInt(deleteParentSimilarityInput.value, 10);
+            if (!Number.isNaN(sv)) {
+                taskData.delete_parent_similarity = sv;
+            }
+        }
+    } else {
+        taskData.delete_source = false;
+    }
+    
     if (!taskData.cron_expression) {
         showNotification('Cron 表达式不能为空', 'error');
         return;
@@ -770,11 +897,47 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskThreadCount', 'sizeMinMb', 'sizeMaxMb', 'suffixList'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskThreadCount', 'sizeMinMb', 'sizeMaxMb', 'suffixList', 'deleteDelayDays'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener('input', () => { taskFormDirty = true; });
+            el.addEventListener('change', () => { taskFormDirty = true; });
+        }
+    });
+    const checkboxes = ['deleteSource', 'deleteParentDir', 'isSlowStorage'];
+    checkboxes.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => { taskFormDirty = true; });
+        }
+    });
+    const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
+    const deleteParentSimilarityValue = document.getElementById('deleteParentSimilarityValue');
+    const deleteParentCheckbox = document.getElementById('deleteParentDir');
+    if (deleteParentSimilarityInput && deleteParentSimilarityValue) {
+        deleteParentSimilarityInput.addEventListener('input', () => {
+            deleteParentSimilarityValue.textContent = `${deleteParentSimilarityInput.value}%`;
+        });
+    }
+    if (deleteParentCheckbox && deleteParentSimilarityInput) {
+        const syncDeleteParentControls = () => {
+            deleteParentSimilarityInput.disabled = !deleteParentCheckbox.checked;
+            if (!deleteParentCheckbox.checked) {
+                deleteParentSimilarityInput.value = 60;
+                if (deleteParentSimilarityValue) {
+                    deleteParentSimilarityValue.textContent = '60%';
+                }
+            } else if (deleteParentSimilarityValue) {
+                deleteParentSimilarityValue.textContent = `${deleteParentSimilarityInput.value}%`;
+            }
+        };
+        deleteParentCheckbox.addEventListener('change', syncDeleteParentControls);
+        syncDeleteParentControls();
+    }
+    ['deleteSource', 'deleteTimeBase', 'deleteParentDir'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
             el.addEventListener('change', () => { taskFormDirty = true; });
         }
     });

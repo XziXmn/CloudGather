@@ -323,6 +323,27 @@ def api_tasks():
     # 获取调度类型
     schedule_type = data.get('schedule_type', 'INTERVAL')
     
+    # 删除源文件配置
+    delete_source = _parse_bool(data.get('delete_source', False), False)
+    delete_delay_days = None
+    if 'delete_delay_days' in data and data.get('delete_delay_days') not in (None, ''):
+        try:
+            delete_delay_days = int(data.get('delete_delay_days'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': '删除延迟天数必须是整数'}), 400
+        if delete_delay_days < 0:
+            return jsonify({'success': False, 'error': '删除延迟天数不能为负数'}), 400
+    delete_time_base = (data.get('delete_time_base', 'SYNC_COMPLETE') or 'SYNC_COMPLETE').upper()
+    delete_parent = _parse_bool(data.get('delete_parent', False), False)
+    delete_parent_similarity = 60
+    if 'delete_parent_similarity' in data and data.get('delete_parent_similarity') not in (None, ''):
+        try:
+            delete_parent_similarity = int(data.get('delete_parent_similarity'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': '上级目录相似度必须是 0-100 的整数'}), 400
+        if delete_parent_similarity < 0 or delete_parent_similarity > 100:
+            return jsonify({'success': False, 'error': '上级目录相似度必须在 0-100 之间'}), 400
+    
     if schedule_type == 'CRON':
         # Cron 调度
         cron_expression = data.get('cron_expression', '').strip()
@@ -351,7 +372,12 @@ def api_tasks():
             size_min_bytes=data.get('size_min_bytes'),
             size_max_bytes=data.get('size_max_bytes'),
             suffix_mode=data.get('suffix_mode', 'NONE'),
-            suffix_list=data.get('suffix_list')
+            suffix_list=data.get('suffix_list'),
+            delete_source=delete_source,
+            delete_delay_days=delete_delay_days,
+            delete_time_base=delete_time_base,
+            delete_parent=delete_parent,
+            delete_parent_similarity=delete_parent_similarity
         )
     else:
         # 间隔调度
@@ -379,7 +405,12 @@ def api_tasks():
             size_min_bytes=data.get('size_min_bytes'),
             size_max_bytes=data.get('size_max_bytes'),
             suffix_mode=data.get('suffix_mode', 'NONE'),
-            suffix_list=data.get('suffix_list')
+            suffix_list=data.get('suffix_list'),
+            delete_source=delete_source,
+            delete_delay_days=delete_delay_days,
+            delete_time_base=delete_time_base,
+            delete_parent=delete_parent,
+            delete_parent_similarity=delete_parent_similarity
         )
 
     if scheduler.add_task(task):
@@ -437,6 +468,36 @@ def api_task_detail(task_id: str):
         updates['suffix_mode'] = (data['suffix_mode'] or 'NONE').upper()
     if 'suffix_list' in data:
         updates['suffix_list'] = data['suffix_list']
+    if 'delete_source' in data:
+        updates['delete_source'] = _parse_bool(data['delete_source'], getattr(task, 'delete_source', False))
+    if 'delete_delay_days' in data:
+        raw_delay = data['delete_delay_days']
+        if raw_delay in (None, ''):
+            updates['delete_delay_days'] = None
+        else:
+            try:
+                delay_val = int(raw_delay)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': '删除延迟天数必须是整数'}), 400
+            if delay_val < 0:
+                return jsonify({'success': False, 'error': '删除延迟天数不能为负数'}), 400
+            updates['delete_delay_days'] = delay_val
+    if 'delete_time_base' in data:
+        updates['delete_time_base'] = (data['delete_time_base'] or 'SYNC_COMPLETE').upper()
+    if 'delete_parent' in data:
+        updates['delete_parent'] = _parse_bool(data['delete_parent'], getattr(task, 'delete_parent', False))
+    if 'delete_parent_similarity' in data:
+        raw_similarity = data['delete_parent_similarity']
+        if raw_similarity in (None, ''):
+            updates['delete_parent_similarity'] = 60
+        else:
+            try:
+                sim_val = int(raw_similarity)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': '上级目录相似度必须是 0-100 的整数'}), 400
+            if sim_val < 0 or sim_val > 100:
+                return jsonify({'success': False, 'error': '上级目录相似度必须在 0-100 之间'}), 400
+            updates['delete_parent_similarity'] = sim_val
 
     # 路径更新时校验并创建目标目录
     if 'source_path' in updates or 'target_path' in updates:
