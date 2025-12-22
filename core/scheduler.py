@@ -140,7 +140,7 @@ class TaskScheduler:
 
     def _on_file_synced(self, task: SyncTask, source_file: Path, result: str):
         """单个文件同步完成回调，用于调度删除"""
-        if result == "Success":
+        if result in ("Success", "Skipped (Unchanged)"):
             self._schedule_file_deletion(task, source_file)
 
     def _process_delete_queue_for_task(self, task: SyncTask):

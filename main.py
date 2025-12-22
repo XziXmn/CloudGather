@@ -1,7 +1,6 @@
 """
 CloudGather（云集）- 媒体文件同步工具
 使用 Flask + HTML 前端
-Version: 0.2
 """
 
 import atexit

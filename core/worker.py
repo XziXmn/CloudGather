@@ -222,12 +222,12 @@ class FileSyncer:
                 if mode == "INCLUDE":
                     if not ext or ext not in suffixes:
                         if log_callback:
-                            log_callback(f"已按后缀规则跳过: {source_file.name} (mode=INCLUDE, ext={ext or '-'})")
+                            log_callback(f"已过滤: {source_file.name} (mode=INCLUDE, ext={ext or '-'})")
                         return "Skipped (Filtered)"
                 elif mode == "EXCLUDE":
                     if ext and ext in suffixes:
                         if log_callback:
-                            log_callback(f"已按后缀规则跳过: {source_file.name} (mode=EXCLUDE, ext={ext})")
+                            log_callback(f"已过滤: {source_file.name} (mode=EXCLUDE, ext={ext})")
                         return "Skipped (Filtered)"
             
             # 3. 大小过滤
@@ -242,14 +242,14 @@ class FileSyncer:
                     if size_min_bytes is not None and size < size_min_bytes:
                         if log_callback:
                             log_callback(
-                                f"已按大小规则跳过: {source_file.name} "
+                                f"已跳过: {source_file.name} "
                                 f"({self._format_size(size)} < 最小 {self._format_size(size_min_bytes)})"
                             )
                         return "Skipped (Filtered)"
                     if size_max_bytes is not None and size > size_max_bytes:
                         if log_callback:
                             log_callback(
-                                f"已按大小规则跳过: {source_file.name} "
+                                f"已跳过: {source_file.name} "
                                 f"({self._format_size(size)} > 最大 {self._format_size(size_max_bytes)})"
                             )
                         return "Skipped (Filtered)"
