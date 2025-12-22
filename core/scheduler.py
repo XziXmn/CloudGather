@@ -511,16 +511,7 @@ class TaskScheduler:
             return False
     
     def update_task(self, task_id: str, **kwargs) -> bool:
-        """
-        更新任务配置
-        
-        Args:
-            task_id: 任务ID
-            **kwargs: 要更新的字段
-            
-        Returns:
-            是否更新成功
-        """
+        """更新任务配置"""
         try:
             if task_id not in self.tasks:
                 self._log(f"任务不存在: {task_id}")
@@ -529,19 +520,26 @@ class TaskScheduler:
             task = self.tasks[task_id]
             old_interval = task.interval
             old_enabled = task.enabled
+            old_cron_expression = getattr(task, "cron_expression", None)
             
             # 更新字段
             for key, value in kwargs.items():
                 if hasattr(task, key):
                     setattr(task, key, value)
             
-            # 如果间隔或启用状态改变，重新调度
-            if (task.interval != old_interval or task.enabled != old_enabled) and self.is_running:
-                if self.scheduler.get_job(task_id):
-                    self.scheduler.remove_job(task_id)
-                
-                if task.enabled:
-                    self._schedule_task(task)
+            # 如果间隔 / 启用状态 / Cron 表达式改变，重新调度
+            if self.is_running:
+                need_reschedule = (
+                    task.interval != old_interval
+                    or task.enabled != old_enabled
+                    or getattr(task, "cron_expression", None) != old_cron_expression
+                )
+                if need_reschedule:
+                    if self.scheduler.get_job(task_id):
+                        self.scheduler.remove_job(task_id)
+                    
+                    if task.enabled:
+                        self._schedule_task(task)
             
             # 保存配置
             self.save_tasks()
@@ -686,7 +684,7 @@ class TaskScheduler:
                     if self.task_context_callback:
                         self.task_context_callback(None)
                     self.task_queue.task_done()
-                    self.save_tasks()
+                    self.save_tasks(log_message=False)
                     continue
                 
                 # 执行同步
@@ -759,7 +757,7 @@ class TaskScheduler:
                     self.task_queue.task_done()
                     
                     # 保存任务状态
-                    self.save_tasks()
+                    self.save_tasks(log_message=False)
                 
             except Exception as e:
                 self._log(f"任务线程异常: {str(e)}")
@@ -814,7 +812,7 @@ class TaskScheduler:
             self.consumer_thread.join(timeout=5)
         
         # 保存任务状态
-        self.save_tasks()
+        self.save_tasks(log_message=False)
         
         self._log("✓ 调度器已停止")
     
@@ -860,7 +858,7 @@ class TaskScheduler:
             import traceback
             self._log(f"错误详情: {traceback.format_exc()}")
     
-    def save_tasks(self):
+    def save_tasks(self, log_message: bool = True):
         """保存任务到配置文件"""
         try:
             # 确保配置目录存在
@@ -878,7 +876,8 @@ class TaskScheduler:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             
-            self._log(f"💾 配置已保存")
+            if log_message:
+                self._log("💾 配置已保存")
             
         except Exception as e:
             self._log(f"✗ 保存任务配置失败: {str(e)}")

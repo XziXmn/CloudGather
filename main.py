@@ -505,6 +505,16 @@ def api_task_detail(task_id: str):
     if 'delete_parent_force' in data:
         updates['delete_parent_force'] = _parse_bool(data['delete_parent_force'], getattr(task, 'delete_parent_force', False))
 
+    # 支持更新 Cron 表达式（用于修改执行时间）
+    if 'cron_expression' in data:
+        cron_expression = (data['cron_expression'] or '').strip()
+        if not cron_expression:
+            return jsonify({'success': False, 'error': 'Cron 表达式不能为空'}), 400
+        parts = cron_expression.split()
+        if len(parts) != 5:
+            return jsonify({'success': False, 'error': 'Cron 表达式格式错误，应为 5 个字段：分 时 日 月 星期'}), 400
+        updates['cron_expression'] = cron_expression
+
     # 路径更新时校验并创建目标目录
     if 'source_path' in updates or 'target_path' in updates:
         new_source = updates.get('source_path', task.source_path)

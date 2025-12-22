@@ -4,12 +4,14 @@ on:
   push:
     branches:
       - main
+      - master
       - dev
     tags:
       - 'v*'
   pull_request:
     branches:
       - main
+      - master
   workflow_dispatch:
 
 env:
@@ -47,8 +49,8 @@ jobs:
             # 如果是 tag 推送，使用 tag 名称
             TAG=${GITHUB_REF#refs/tags/}
             PUSH_VERSION="true"
-          elif [[ $GITHUB_REF == refs/heads/main ]]; then
-            # main 分支推送为 latest + 版本号
+          elif [[ $GITHUB_REF == refs/heads/main ]] || [[ $GITHUB_REF == refs/heads/master ]]; then
+            # main/master 分支推送为 latest + 版本号
             TAG="latest"
             PUSH_VERSION="true"
           elif [[ $GITHUB_REF == refs/heads/dev ]]; then
