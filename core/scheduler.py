@@ -153,6 +153,14 @@ class TaskScheduler:
             queue_copy = list(self.delete_queue)
 
         remaining = []
+        # 删除统计
+        delete_stats = {
+            "files_deleted": 0,
+            "dirs_deleted": 0,
+            "files_not_exist": 0,
+            "files_failed": 0
+        }
+        
         for item in queue_copy:
             # 只处理当前任务的记录，其它任务的记录原样保留
             if item.get("task_id") != task_id:
@@ -182,15 +190,19 @@ class TaskScheduler:
                 if path.exists():
                     try:
                         path.unlink()
+                        delete_stats["files_deleted"] += 1
                         self._log(f"🗑 已删除源文件: {path}")
                     except IsADirectoryError:
                         # 极端情况：记录的是目录
                         if path.is_dir():
                             shutil.rmtree(path, ignore_errors=False)
+                            delete_stats["dirs_deleted"] += 1
                             self._log(f"🗑 已删除目录: {path}")
                 else:
+                    delete_stats["files_not_exist"] += 1
                     self._log(f"ℹ 源文件已不存在，跳过: {path}")
             except Exception as e:
+                delete_stats["files_failed"] += 1
                 self._log(f"⚠ 删除源文件失败: {path} - {e}")
                 # 删除失败，保留记录以便下次重试
                 remaining.append(item)
@@ -267,12 +279,24 @@ class TaskScheduler:
 
                     # 通过安全和相似度检查后，递归删除上级目录
                     shutil.rmtree(parent, ignore_errors=False)
+                    delete_stats["dirs_deleted"] += 1
                     self._log(f"🗑 已强制删除上级目录: {parent}")
                 except Exception as e:
                     self._log(f"⚠ 删除上级目录失败: {path.parent} - {e}")
 
         with self._delete_queue_lock:
             self.delete_queue = remaining
+        
+        # 输出删除统计汇总
+        total_deleted = delete_stats["files_deleted"] + delete_stats["dirs_deleted"]
+        if total_deleted > 0 or delete_stats["files_not_exist"] > 0 or delete_stats["files_failed"] > 0:
+            self._log(
+                f"✅ 删除队列处理完成: "
+                f"删除文件 {delete_stats['files_deleted']} 个, "
+                f"删除目录 {delete_stats['dirs_deleted']} 个, "
+                f"已不存在 {delete_stats['files_not_exist']} 个, "
+                f"删除失败 {delete_stats['files_failed']} 个"
+            )
 
     def _update_progress(self, task_id: str, stats: dict):
         """
