@@ -51,7 +51,9 @@ class SyncTask:
         delete_delay_days: Optional[int] = None,  # 删除延迟天数，0 表示同步完成后立即删除
         delete_time_base: str = "SYNC_COMPLETE",  # 删除时间基准：SYNC_COMPLETE / FILE_CREATE
         delete_parent: bool = False,  # 是否同时尝试删除上级目录
-        delete_parent_similarity: int = 60  # 上级目录名与文件名共同前缀占比阈值(0-100)
+        delete_parent_similarity: int = 60,  # 上级目录名与文件名共同前缀占比阈值(0-100)，已废弃
+        delete_parent_levels: int = 0,  # 从文件所在目录向上最多尝试删除的层级数（0 表示不删目录）
+        delete_parent_force: bool = False  # 是否强制删除非空目录，就算目录下有未同步的元数据或者其他文件也删除
     ):
         """
         初始化同步任务
@@ -118,6 +120,16 @@ class SyncTask:
         if similarity > 100:
             similarity = 100
         self.delete_parent_similarity = similarity
+        # 目录删除层级（非负整数）
+        try:
+            levels = int(delete_parent_levels)
+        except (TypeError, ValueError):
+            levels = 0
+        if levels < 0:
+            levels = 0
+        self.delete_parent_levels = levels
+        # 是否强制删除非空目录
+        self.delete_parent_force = bool(delete_parent_force)
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -152,7 +164,9 @@ class SyncTask:
             "delete_delay_days": self.delete_delay_days,
             "delete_time_base": self.delete_time_base,
             "delete_parent": self.delete_parent,
-            "delete_parent_similarity": self.delete_parent_similarity
+            "delete_parent_similarity": self.delete_parent_similarity,
+            "delete_parent_levels": self.delete_parent_levels,
+            "delete_parent_force": self.delete_parent_force
         }
     
     @classmethod
@@ -191,7 +205,9 @@ class SyncTask:
             delete_delay_days=data.get("delete_delay_days"),
             delete_time_base=data.get("delete_time_base", "SYNC_COMPLETE"),
             delete_parent=data.get("delete_parent", False),
-            delete_parent_similarity=data.get("delete_parent_similarity", 60)
+            delete_parent_similarity=data.get("delete_parent_similarity", 60),
+            delete_parent_levels=data.get("delete_parent_levels", 0),
+            delete_parent_force=data.get("delete_parent_force", False)
         )
     
     def update_status(self, new_status: TaskStatus):

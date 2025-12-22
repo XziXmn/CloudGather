@@ -10,7 +10,7 @@ import time
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Set
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -160,6 +160,8 @@ class TaskScheduler:
             "files_not_exist": 0,
             "files_failed": 0
         }
+        # 本轮成功删除的源文件路径列表（用于后续目录清理）
+        deleted_files: List[Path] = []
         
         for item in queue_copy:
             # 只处理当前任务的记录，其它任务的记录原样保留
@@ -191,12 +193,14 @@ class TaskScheduler:
                     try:
                         path.unlink()
                         delete_stats["files_deleted"] += 1
+                        deleted_files.append(path)
                         self._log(f"🗑 已删除源文件: {path}")
                     except IsADirectoryError:
                         # 极端情况：记录的是目录
                         if path.is_dir():
                             shutil.rmtree(path, ignore_errors=False)
                             delete_stats["dirs_deleted"] += 1
+                            deleted_files.append(path)
                             self._log(f"🗑 已删除目录: {path}")
                 else:
                     delete_stats["files_not_exist"] += 1
@@ -208,84 +212,19 @@ class TaskScheduler:
                 remaining.append(item)
                 continue
 
-            # 处理上级目录（带相似度和安全检查）
+            # 处理上级目录（带删除层级和安全检查）
             if delete_parent:
-                try:
-                    parent = path.parent
-                    if not parent.exists():
-                        continue
-
-                    # 解析关键路径
-                    try:
-                        parent_resolved = parent.resolve()
-                    except Exception:
-                        parent_resolved = parent
-
-                    home_dir = Path.home()
-                    try:
-                        home_resolved = home_dir.resolve()
-                    except Exception:
-                        home_resolved = home_dir
-
-                    # 系统根目录 / 用户主目录 永远禁止删除
-                    root_of_drive = Path(parent_resolved.anchor) if parent_resolved.anchor else None
-                    if (root_of_drive is not None and parent_resolved == root_of_drive) or parent_resolved == home_resolved:
-                        self._log(f"⚠ 为安全起见，未删除关键目录: {parent_resolved}")
-                        continue
-
-                    # 限制在任务源目录内，且不能删除任务源目录本身
-                    try:
-                        root = task_source_root
-                        root_resolved = root.resolve()
-                    except Exception:
-                        root_resolved = root
-
-                    # parent 必须是 root 的子目录（严格），否则不删除
-                    if root_resolved not in parent_resolved.parents:
-                        self._log(f"⚠ 为安全起见，未删除上级目录（不在任务源目录内或为源目录本身）: {parent}")
-                        continue
-
-                    # 相似度匹配：目录名与文件名（去扩展名）需具有足够共同前缀
-                    file_name = path.stem.lower()
-                    dir_name = parent_resolved.name.lower()
-                    if not file_name or not dir_name:
-                        self._log(f"⚠ 目录/文件名为空，跳过上级目录删除: {parent}")
-                        continue
-
-                    prefix_len = 0
-                    for ch1, ch2 in zip(file_name, dir_name):
-                        if ch1 != ch2:
-                            break
-                        prefix_len += 1
-
-                    min_len = min(len(file_name), len(dir_name))
-                    similarity = getattr(task, "delete_parent_similarity", 60)
-                    try:
-                        similarity = int(similarity)
-                    except (TypeError, ValueError):
-                        similarity = 60
-                    if similarity < 0:
-                        similarity = 0
-                    if similarity > 100:
-                        similarity = 100
-                    required_prefix = int(min_len * (similarity / 100.0)) if min_len > 0 else 0
-                    # 共同前缀长度需超过较短名称长度的指定比例
-                    if min_len == 0 or prefix_len < required_prefix:
-                        self._log(
-                            f"⚠ 上级目录与文件名相似度不足，跳过删除: dir={dir_name}, file={file_name}, "
-                            f"common_prefix={prefix_len}/{min_len}, required={required_prefix}"
-                        )
-                        continue
-
-                    # 通过安全和相似度检查后，递归删除上级目录
-                    shutil.rmtree(parent, ignore_errors=False)
-                    delete_stats["dirs_deleted"] += 1
-                    self._log(f"🗑 已强制删除上级目录: {parent}")
-                except Exception as e:
-                    self._log(f"⚠ 删除上级目录失败: {path.parent} - {e}")
+                # 只记录文件路径，目录清理将在循环结束后统一处理
+                pass
 
         with self._delete_queue_lock:
             self.delete_queue = remaining
+        
+        # 基于本轮成功删除的文件，按任务配置清理上级目录
+        try:
+            self._cleanup_parent_dirs_for_deleted(task, deleted_files, delete_stats, now)
+        except Exception as e:
+            self._log(f"⚠ 处理上级目录删除时发生异常: {e}")
         
         # 输出删除统计汇总
         total_deleted = delete_stats["files_deleted"] + delete_stats["dirs_deleted"]
@@ -298,11 +237,140 @@ class TaskScheduler:
                 f"删除失败 {delete_stats['files_failed']} 个"
             )
 
+    def _cleanup_parent_dirs_for_deleted(self, task: SyncTask, deleted_files: List[Path], delete_stats: dict, now: datetime):
+        """根据任务配置，为本轮已删除的文件向上尝试删除上级目录"""
+        # 未启用目录删除，直接返回
+        if not getattr(task, "delete_parent", False):
+            return
+        if not deleted_files:
+            return
+
+        # 解析任务源目录与关键路径
+        try:
+            root = Path(task.source_path)
+            try:
+                root_resolved = root.resolve()
+            except Exception:
+                root_resolved = root
+        except Exception:
+            return
+
+        home_dir = Path.home()
+        try:
+            home_resolved = home_dir.resolve()
+        except Exception:
+            home_resolved = home_dir
+
+        max_levels = 0
+        try:
+            max_levels = int(getattr(task, "delete_parent_levels", 0) or 0)
+        except (TypeError, ValueError):
+            max_levels = 0
+        if max_levels <= 0:
+            return
+
+        # 是否强制删除非空目录（仍然会保护未到期文件）
+        force_delete_nonempty = bool(getattr(task, "delete_parent_force", False))
+
+        # 复制当前删除队列用于 pending 判断
+        with self._delete_queue_lock:
+            queue_snapshot = list(self.delete_queue)
+
+        processed_dirs: Set[Path] = set()
+
+        for file_path in deleted_files:
+            # 只处理源目录子树内的文件
+            try:
+                fp = Path(file_path)
+            except Exception:
+                continue
+
+            parent = fp.parent
+            level = 1
+
+            while level <= max_levels:
+                cand = parent
+                if cand in processed_dirs:
+                    # 已处理过的目录不必重复
+                    break
+
+                if not cand.exists():
+                    break
+
+                try:
+                    cand_resolved = cand.resolve()
+                except Exception:
+                    cand_resolved = cand
+
+                # 根目录 / 用户主目录 / 任务源目录本身 禁止删除
+                root_of_drive = Path(cand_resolved.anchor) if cand_resolved.anchor else None
+                if (root_of_drive is not None and cand_resolved == root_of_drive) or cand_resolved == home_resolved:
+                    break
+                if cand_resolved == root_resolved:
+                    # 不删除 source_path 本身，停止向上检查
+                    break
+
+                # cand 必须在任务源目录子树内
+                if root_resolved not in cand_resolved.parents:
+                    break
+
+                # 若目录下还有未到删除时间的文件，则暂缓删除
+                if self._has_pending_delete_entries(task_id=task.id, base_dir=cand_resolved, queue_snapshot=queue_snapshot, now=now):
+                    break
+
+                # 非强制模式下，仅在目录物理为空时删除
+                if not force_delete_nonempty:
+                    try:
+                        if any(cand.iterdir()):
+                            break
+                    except Exception:
+                        break
+
+                # 安全删除该目录
+                try:
+                    shutil.rmtree(cand, ignore_errors=False)
+                    delete_stats["dirs_deleted"] += 1
+                    self._log(f"🗑 已删除上级目录: {cand}")
+                except Exception as e:
+                    self._log(f"⚠ 删除上级目录失败: {cand} - {e}")
+                    break
+
+                processed_dirs.add(cand)
+                # 继续向上尝试
+                parent = cand.parent
+                level += 1
+
+    def _has_pending_delete_entries(self, task_id: str, base_dir: Path, queue_snapshot: List[dict], now: datetime) -> bool:
+        """判断指定目录子树下是否存在未到删除时间的记录"""
+        for item in queue_snapshot:
+            if item.get("task_id") != task_id:
+                continue
+            source_path = item.get("source_path")
+            delete_at_str = item.get("delete_at")
+            if not source_path or not delete_at_str:
+                continue
+            try:
+                delete_at = datetime.fromisoformat(delete_at_str)
+            except Exception:
+                continue
+            if delete_at <= now:
+                # 已到期或过期的记录，不视为 pending
+                continue
+            # 判断 source_path 是否在 base_dir 子树内
+            try:
+                sp = Path(source_path)
+                try:
+                    sp_resolved = sp.resolve()
+                except Exception:
+                    sp_resolved = sp
+                if base_dir == sp_resolved or base_dir in sp_resolved.parents:
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _update_progress(self, task_id: str, stats: dict):
         """
-        更新任务进度
-        
-        Args:
             task_id: 任务ID
             stats: 同步统计信息
         """

@@ -308,12 +308,24 @@ function renderTasks(tasks) {
             if (typeof task.delete_delay_days === 'number' && task.delete_delay_days > 0) {
                 delayLabel = `${task.delete_delay_days} 天后删除`;
             }
-            const parentLabel = task.delete_parent ? '，尝试删除上级目录' : '';
-            let similarityLabel = '';
-            if (typeof task.delete_parent_similarity === 'number') {
-                similarityLabel = `，相似度≥${task.delete_parent_similarity}%`;
+            let parentLabel = '';
+            if (task.delete_parent) {
+                parentLabel = '，尝试删除文件目录';
+                const levels = typeof task.delete_parent_levels === 'number' ? task.delete_parent_levels : 0;
+                let levelLabel = '';
+                if (levels === 0) {
+                    levelLabel = '（仅删除文件）';
+                } else if (levels === 1) {
+                    levelLabel = '（删除文件所在目录）';
+                } else if (levels === 2) {
+                    levelLabel = '（删除文件所在目录及上一层）';
+                } else if (levels > 2) {
+                    levelLabel = `（最多向上 ${levels} 层）`;
+                }
+                const forceLabel = task.delete_parent_force ? '，可删除非空目录' : '';
+                parentLabel += levelLabel + forceLabel;
             }
-            deleteInfo = `<div class="text-xs text-red-500 mt-1"><i class="fas fa-trash-can mr-1"></i>${delayLabel}（基于${baseLabel}${parentLabel}${similarityLabel}）</div>`;
+            deleteInfo = `<div class="text-xs text-red-500 mt-1"><i class="fas fa-trash-can mr-1"></i>${delayLabel}（基于${baseLabel}${parentLabel}）</div>`;
         }
         
         return `
@@ -526,20 +538,15 @@ function showAddTaskModal() {
     const deleteDelayInput = document.getElementById('deleteDelayDays');
     const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
     const deleteParentCheckbox = document.getElementById('deleteParentDir');
-    const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
-    const deleteParentSimilarityValue = document.getElementById('deleteParentSimilarityValue');
+    const deleteParentLevelsSelect = document.getElementById('deleteParentLevels');
+    const deleteParentForceCheckbox = document.getElementById('deleteParentForce');
     if (deleteSourceCheckbox) deleteSourceCheckbox.checked = false;
     if (deleteDelayInput) deleteDelayInput.value = '';
     if (deleteTimeBaseSelect) deleteTimeBaseSelect.value = 'SYNC_COMPLETE';
     if (deleteParentCheckbox) deleteParentCheckbox.checked = false;
-    if (deleteParentSimilarityInput) {
-        deleteParentSimilarityInput.value = 60;
-        deleteParentSimilarityInput.disabled = true;
-    }
-    if (deleteParentSimilarityValue) {
-        deleteParentSimilarityValue.textContent = '60%';
-    }
-    
+    if (deleteParentLevelsSelect) deleteParentLevelsSelect.value = '1';
+    if (deleteParentForceCheckbox) deleteParentForceCheckbox.checked = false;
+            
     // 重置子规则按钮状态（默认启用「文件不存在」规则）
     ['ruleNotExists', 'ruleSizeDiff', 'ruleMtimeNewer'].forEach(id => {
         const btn = document.getElementById(id);
@@ -750,8 +757,8 @@ async function editTask(taskId) {
         const deleteDelayInput = document.getElementById('deleteDelayDays');
         const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
         const deleteParentCheckbox = document.getElementById('deleteParentDir');
-        const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
-        const deleteParentSimilarityValue = document.getElementById('deleteParentSimilarityValue');
+        const deleteParentLevelsSelect = document.getElementById('deleteParentLevels');
+        const deleteParentForceCheckbox = document.getElementById('deleteParentForce');
         if (deleteSourceCheckbox) {
             deleteSourceCheckbox.checked = !!task.delete_source;
         }
@@ -764,15 +771,17 @@ async function editTask(taskId) {
         if (deleteParentCheckbox) {
             deleteParentCheckbox.checked = !!task.delete_parent;
         }
-        if (deleteParentSimilarityInput) {
-            const sim = typeof task.delete_parent_similarity === 'number' ? task.delete_parent_similarity : 60;
-            deleteParentSimilarityInput.value = sim;
-            deleteParentSimilarityInput.disabled = !deleteParentCheckbox || !deleteParentCheckbox.checked;
+        if (deleteParentLevelsSelect) {
+            let levels = typeof task.delete_parent_levels === 'number' ? task.delete_parent_levels : 1;
+            if (!levels || levels < 1) {
+                levels = 1;
+            }
+            deleteParentLevelsSelect.value = String(levels);
         }
-        if (deleteParentSimilarityValue && deleteParentSimilarityInput) {
-            deleteParentSimilarityValue.textContent = `${deleteParentSimilarityInput.value}%`;
+        if (deleteParentForceCheckbox) {
+            deleteParentForceCheckbox.checked = !!task.delete_parent_force;
         }
-        
+                        
         // 填充 Cron 表达式
         document.getElementById('cronExpression').value = task.cron_expression || '';
         validateCron();
@@ -843,7 +852,8 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
     const deleteDelayInput = document.getElementById('deleteDelayDays');
     const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
     const deleteParentCheckbox = document.getElementById('deleteParentDir');
-    const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
+    const deleteParentLevelsSelect = document.getElementById('deleteParentLevels');
+    const deleteParentForceCheckbox = document.getElementById('deleteParentForce');
     if (deleteSourceCheckbox && deleteSourceCheckbox.checked) {
         taskData.delete_source = true;
         if (deleteDelayInput && deleteDelayInput.value !== '') {
@@ -857,17 +867,20 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         }
         if (deleteParentCheckbox && deleteParentCheckbox.checked) {
             taskData.delete_parent = true;
-        }
-        if (deleteParentSimilarityInput && !deleteParentSimilarityInput.disabled) {
-            const sv = parseInt(deleteParentSimilarityInput.value, 10);
-            if (!Number.isNaN(sv)) {
-                taskData.delete_parent_similarity = sv;
+            if (deleteParentLevelsSelect && deleteParentLevelsSelect.value !== '') {
+                const lv = parseInt(deleteParentLevelsSelect.value, 10);
+                if (!Number.isNaN(lv)) {
+                    taskData.delete_parent_levels = lv;
+                }
+            }
+            if (deleteParentForceCheckbox) {
+                taskData.delete_parent_force = !!deleteParentForceCheckbox.checked;
             }
         }
     } else {
         taskData.delete_source = false;
     }
-    
+        
     if (!taskData.cron_expression) {
         showNotification('Cron 表达式不能为空', 'error');
         return;
