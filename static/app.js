@@ -833,8 +833,10 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
     }
     if (suffixModeSelect) {
         const mode = suffixModeSelect.value || 'NONE';
+        // 始终设置 suffix_mode，包括 NONE 的情况
+        taskData.suffix_mode = mode;
+        
         if (mode !== 'NONE') {
-            taskData.suffix_mode = mode;
             if (suffixListInput && suffixListInput.value.trim() !== '') {
                 taskData.suffix_list = suffixListInput.value
                     .split(',')
@@ -844,6 +846,9 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
             } else {
                 taskData.suffix_list = [];
             }
+        } else {
+            // mode === 'NONE' 时，显式发送空列表以清除旧的过滤规则
+            taskData.suffix_list = [];
         }
     }
     
@@ -952,7 +957,19 @@ function initFormChangeListener() {
     }
     // 后缀输入框预设选择面板
     const suffixListInput = document.getElementById('suffixList');
+    const suffixModeSelect = document.getElementById('suffixMode');
     const suffixPresetPanel = document.getElementById('suffixPresetPanel');
+    
+    // 监听 suffixMode 变化，当切换到 NONE 时清空输入框
+    if (suffixModeSelect && suffixListInput) {
+        suffixModeSelect.addEventListener('change', () => {
+            if (suffixModeSelect.value === 'NONE') {
+                suffixListInput.value = '';
+                taskFormDirty = true;
+            }
+        });
+    }
+    
     if (suffixListInput && suffixPresetPanel) {
         // 输入框获得焦点时显示面板
         suffixListInput.addEventListener('focus', () => {
