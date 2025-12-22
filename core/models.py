@@ -42,7 +42,18 @@ class SyncTask:
         rule_not_exists: bool = False,  # 子规则：文件不存在时同步
         rule_size_diff: bool = False,  # 子规则：大小不一致时同步
         rule_mtime_newer: bool = False,  # 子规则：源文件更新时同步
-        is_slow_storage: bool = False  # 目标是否为慢速存储（NAS/网盘挂载）
+        is_slow_storage: bool = False,  # 目标是否为慢速存储（NAS/网盘挂载）
+        size_min_bytes: Optional[int] = None,  # 最小文件大小（字节），None 表示不限制
+        size_max_bytes: Optional[int] = None,  # 最大文件大小（字节），None 表示不限制
+        suffix_mode: str = "NONE",  # 后缀过滤模式：NONE/INCLUDE/EXCLUDE
+        suffix_list: Optional[list[str]] = None,  # 后缀列表，小写且不带点，如 ["mp4", "mkv"]
+        delete_source: bool = False,  # 是否删除源文件
+        delete_delay_days: Optional[int] = None,  # 删除延迟天数，0 表示同步完成后立即删除
+        delete_time_base: str = "SYNC_COMPLETE",  # 删除时间基准：SYNC_COMPLETE / FILE_CREATE
+        delete_parent: bool = False,  # 是否同时尝试删除上级目录
+        delete_parent_similarity: int = 60,  # 上级目录名与文件名共同前缀占比阈值(0-100)，已废弃
+        delete_parent_levels: int = 0,  # 从文件所在目录向上最多尝试删除的层级数（0 表示不删目录）
+        delete_parent_force: bool = False  # 是否强制删除非空目录，就算目录下有未同步的元数据或者其他文件也删除
     ):
         """
         初始化同步任务
@@ -64,6 +75,10 @@ class SyncTask:
             rule_size_diff: 子规则 - 大小不一致时同步
             rule_mtime_newer: 子规则 - 源文件更新时同步
             is_slow_storage: 目标是否为慢速存储（NAS/网盘挂载）
+            size_min_bytes: 最小文件大小（字节），None 表示不限制
+            size_max_bytes: 最大文件大小（字节），None 表示不限制
+            suffix_mode: 后缀过滤模式：NONE（默认）/INCLUDE/EXCLUDE
+            suffix_list: 后缀列表（字符串数组），例如 ["mp4", "mkv"]
         """
         self.id = task_id if task_id else str(uuid.uuid4())
         self.name = name
@@ -86,6 +101,35 @@ class SyncTask:
         self.rule_not_exists = rule_not_exists
         self.rule_size_diff = rule_size_diff
         self.rule_mtime_newer = rule_mtime_newer
+        self.size_min_bytes = size_min_bytes
+        self.size_max_bytes = size_max_bytes
+        # 规范化后缀过滤配置
+        self.suffix_mode = (suffix_mode or "NONE").upper()
+        self.suffix_list = [s.lower().lstrip(".") for s in suffix_list] if suffix_list else None
+        # 删除源文件配置
+        self.delete_source = delete_source
+        self.delete_delay_days = delete_delay_days
+        self.delete_time_base = (delete_time_base or "SYNC_COMPLETE").upper()
+        self.delete_parent = delete_parent
+        try:
+            similarity = int(delete_parent_similarity)
+        except (TypeError, ValueError):
+            similarity = 60
+        if similarity < 0:
+            similarity = 0
+        if similarity > 100:
+            similarity = 100
+        self.delete_parent_similarity = similarity
+        # 目录删除层级（非负整数）
+        try:
+            levels = int(delete_parent_levels)
+        except (TypeError, ValueError):
+            levels = 0
+        if levels < 0:
+            levels = 0
+        self.delete_parent_levels = levels
+        # 是否强制删除非空目录
+        self.delete_parent_force = bool(delete_parent_force)
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -111,7 +155,18 @@ class SyncTask:
             "rule_not_exists": self.rule_not_exists,
             "rule_size_diff": self.rule_size_diff,
             "rule_mtime_newer": self.rule_mtime_newer,
-            "is_slow_storage": self.is_slow_storage
+            "is_slow_storage": self.is_slow_storage,
+            "size_min_bytes": self.size_min_bytes,
+            "size_max_bytes": self.size_max_bytes,
+            "suffix_mode": self.suffix_mode,
+            "suffix_list": self.suffix_list,
+            "delete_source": self.delete_source,
+            "delete_delay_days": self.delete_delay_days,
+            "delete_time_base": self.delete_time_base,
+            "delete_parent": self.delete_parent,
+            "delete_parent_similarity": self.delete_parent_similarity,
+            "delete_parent_levels": self.delete_parent_levels,
+            "delete_parent_force": self.delete_parent_force
         }
     
     @classmethod
@@ -141,7 +196,18 @@ class SyncTask:
             rule_not_exists=data.get("rule_not_exists", False),
             rule_size_diff=data.get("rule_size_diff", False),
             rule_mtime_newer=data.get("rule_mtime_newer", False),
-            is_slow_storage=data.get("is_slow_storage", False)
+            is_slow_storage=data.get("is_slow_storage", False),
+            size_min_bytes=data.get("size_min_bytes"),
+            size_max_bytes=data.get("size_max_bytes"),
+            suffix_mode=data.get("suffix_mode", "NONE"),
+            suffix_list=data.get("suffix_list"),
+            delete_source=data.get("delete_source", False),
+            delete_delay_days=data.get("delete_delay_days"),
+            delete_time_base=data.get("delete_time_base", "SYNC_COMPLETE"),
+            delete_parent=data.get("delete_parent", False),
+            delete_parent_similarity=data.get("delete_parent_similarity", 60),
+            delete_parent_levels=data.get("delete_parent_levels", 0),
+            delete_parent_force=data.get("delete_parent_force", False)
         )
     
     def update_status(self, new_status: TaskStatus):

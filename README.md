@@ -5,7 +5,7 @@
 **基于飞牛OS的媒体文件同步工具**
 
 [![Docker Image](https://img.shields.io/badge/docker-xzixmn%2Fcloudgather-blue)](https://hub.docker.com/r/xzixmn/cloudgather)
-[![Version](https://img.shields.io/badge/version-0.2-green)](https://github.com/xzixmn/cloudgather)
+[![Version](https://img.shields.io/badge/version-0.5.3-green)](https://github.com/xzixmn/cloudgather)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 
 专为飞牛OS设计，将本地下载的影视资源自动备份到网盘，配合strm文件实现302播放
@@ -23,6 +23,8 @@
 - 🎯 **增量备份** - 智能跳过已存在文件，仅同步新增内容
 - 🌐 **现代UI** - 简洁美观的Web界面，支持深色模式
 - 📝 **完整日志** - 分级日志记录，备份过程可追溯
+- 🧹 **源目录清理** - 支持按规则延迟/即时删除源文件，并按任务配置自动清理上级目录，释放本地空间
+- 🔍 **文件过滤** - 按文件大小和扩展名 INCLUDE/EXCLUDE 精准控制同步范围
 
 ## 🎯 完整工作流程
 
@@ -116,6 +118,8 @@ docker-compose up -d
 4. **高级选项**
    - 🔧 **线程数**：建议设置为 1-2（网盘上传并发过高易失败）
    - 🌐 **网络云盘**：**必须勾选**，自动优化网盘上传（限流+重试）
+   - 🧹 **删除源文件**：可配置删除延迟天数（支持 0 表示同步后立即删除），支持按同步完成时间或文件创建时间作为基准，并可按任务同步目录配置删除目录层级（当前目录 / 当前及上级目录 / 当前及向上多级目录），同时可选尝试删除非空目录（始终优先保护未到删除时间的文件）
+   - 🔍 **过滤规则**：按大小（MB）与扩展名 INCLUDE/EXCLUDE 过滤需要同步的文件
 
 ### 网盘备份优化
 
@@ -199,7 +203,8 @@ CloudGather/
 - [x] 实时进度条
 - [x] 网盘上传优化（限流+重试）
 - [x] 日志自动清理
-- [ ] 文件过滤规则（扩展名、大小、排除目录）
+- [x] 文件过滤规则（扩展名、大小）
+- [x] 文件删除规则（延迟、及时）
 - [ ] 上传速度限制（避免占满带宽）
 - [ ] 备份完成通知（微信/邮件）
 - [ ] 未知

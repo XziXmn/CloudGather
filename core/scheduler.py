@@ -8,9 +8,10 @@ import queue
 import threading
 import time
 import os
+import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Callable
-from datetime import datetime
+from typing import Dict, List, Optional, Callable, Set
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -40,6 +41,8 @@ class TaskScheduler:
         self.task_context_callback: Optional[Callable[[Optional[str]], None]] = None  # 任务上下文回调
         self.task_progress: Dict[str, dict] = {}  # 任务进度缓存: task_id -> progress_info
         self.task_stats: Dict[str, dict] = {}  # 任务最终统计信息: task_id -> stats
+        self.delete_queue: List[dict] = []  # 待删除源文件队列
+        self._delete_queue_lock = threading.Lock()
         
         # 确保配置目录存在
         try:
@@ -83,15 +86,295 @@ class TaskScheduler:
         if self.log_callback:
             self.log_callback(message)
     
+    def _schedule_file_deletion(self, task: SyncTask, source_file: Path):
+        """根据任务配置为单个文件计算删除时间并加入队列"""
+        # 未开启删除则直接返回
+        if not getattr(task, "delete_source", False):
+            return
+
+        # 允许 0 天表示同步完成后立即删除，负数一律按 0 处理
+        delay_days = getattr(task, "delete_delay_days", None)
+        if delay_days is None:
+            delay_days = 0
+        try:
+            delay_days = int(delay_days)
+        except (TypeError, ValueError):
+            delay_days = 0
+        if delay_days < 0:
+            delay_days = 0
+
+        base_type = (getattr(task, "delete_time_base", "SYNC_COMPLETE") or "SYNC_COMPLETE").upper()
+
+        # 计算基准时间
+        try:
+            if base_type == "FILE_CREATE":
+                stat = source_file.stat()
+                base_time = datetime.fromtimestamp(stat.st_ctime)
+            else:
+                # 默认使用同步完成时间（近似为当前时间）
+                base_time = datetime.now()
+        except Exception as e:
+            self._log(f"⚠ 计算删除时间失败: {source_file} - {e}")
+            return
+
+        delete_at = base_time + timedelta(days=delay_days)
+
+        record = {
+            "task_id": task.id,
+            "source_path": str(source_file),
+            "delete_at": delete_at.isoformat(),
+            "delete_parent": bool(getattr(task, "delete_parent", False)),
+            "time_base": base_type,
+        }
+
+        # 写入/更新队列
+        with self._delete_queue_lock:
+            updated = False
+            for item in self.delete_queue:
+                if item.get("task_id") == task.id and item.get("source_path") == record["source_path"]:
+                    item.update(record)
+                    updated = True
+                    break
+            if not updated:
+                self.delete_queue.append(record)
+
+    def _on_file_synced(self, task: SyncTask, source_file: Path, result: str):
+        """单个文件同步完成回调，用于调度删除"""
+        if result in ("Success", "Skipped (Unchanged)"):
+            self._schedule_file_deletion(task, source_file)
+
+    def _process_delete_queue_for_task(self, task: SyncTask):
+        """扫描删除队列中属于指定任务且到期的记录，并执行删除"""
+        now = datetime.now()
+        task_id = task.id
+        task_source_root = Path(task.source_path)
+
+        with self._delete_queue_lock:
+            queue_copy = list(self.delete_queue)
+
+        remaining = []
+        # 删除统计
+        delete_stats = {
+            "files_deleted": 0,
+            "dirs_deleted": 0,
+            "files_not_exist": 0,
+            "files_failed": 0
+        }
+        # 本轮成功删除的源文件路径列表（用于后续目录清理）
+        deleted_files: List[Path] = []
+        
+        for item in queue_copy:
+            # 只处理当前任务的记录，其它任务的记录原样保留
+            if item.get("task_id") != task_id:
+                remaining.append(item)
+                continue
+
+            delete_at_str = item.get("delete_at")
+            source_path = item.get("source_path")
+            delete_parent = bool(item.get("delete_parent", False))
+
+            if not delete_at_str or not source_path:
+                continue
+
+            try:
+                delete_at = datetime.fromisoformat(delete_at_str)
+            except Exception:
+                # 删除时间不可解析时丢弃记录
+                continue
+
+            if delete_at > now:
+                # 未到删除时间，保留记录
+                remaining.append(item)
+                continue
+
+            path = Path(source_path)
+            try:
+                if path.exists():
+                    try:
+                        path.unlink()
+                        delete_stats["files_deleted"] += 1
+                        deleted_files.append(path)
+                        self._log(f"🗑 已删除源文件: {path}")
+                    except IsADirectoryError:
+                        # 极端情况：记录的是目录
+                        if path.is_dir():
+                            shutil.rmtree(path, ignore_errors=False)
+                            delete_stats["dirs_deleted"] += 1
+                            deleted_files.append(path)
+                            self._log(f"🗑 已删除目录: {path}")
+                else:
+                    delete_stats["files_not_exist"] += 1
+                    self._log(f"ℹ 源文件已不存在，跳过: {path}")
+            except Exception as e:
+                delete_stats["files_failed"] += 1
+                self._log(f"⚠ 删除源文件失败: {path} - {e}")
+                # 删除失败，保留记录以便下次重试
+                remaining.append(item)
+                continue
+
+            # 处理上级目录（带删除层级和安全检查）
+            if delete_parent:
+                # 只记录文件路径，目录清理将在循环结束后统一处理
+                pass
+
+        with self._delete_queue_lock:
+            self.delete_queue = remaining
+        
+        # 基于本轮成功删除的文件，按任务配置清理上级目录
+        try:
+            self._cleanup_parent_dirs_for_deleted(task, deleted_files, delete_stats, now)
+        except Exception as e:
+            self._log(f"⚠ 处理上级目录删除时发生异常: {e}")
+        
+        # 输出删除统计汇总
+        total_deleted = delete_stats["files_deleted"] + delete_stats["dirs_deleted"]
+        if total_deleted > 0 or delete_stats["files_not_exist"] > 0 or delete_stats["files_failed"] > 0:
+            self._log(
+                f"✅ 删除队列处理完成: "
+                f"删除文件 {delete_stats['files_deleted']} 个, "
+                f"删除目录 {delete_stats['dirs_deleted']} 个, "
+                f"已不存在 {delete_stats['files_not_exist']} 个, "
+                f"删除失败 {delete_stats['files_failed']} 个"
+            )
+
+    def _cleanup_parent_dirs_for_deleted(self, task: SyncTask, deleted_files: List[Path], delete_stats: dict, now: datetime):
+        """根据任务配置，为本轮已删除的文件向上尝试删除上级目录"""
+        # 未启用目录删除，直接返回
+        if not getattr(task, "delete_parent", False):
+            return
+        if not deleted_files:
+            return
+
+        # 解析任务源目录与关键路径
+        try:
+            root = Path(task.source_path)
+            try:
+                root_resolved = root.resolve()
+            except Exception:
+                root_resolved = root
+        except Exception:
+            return
+
+        home_dir = Path.home()
+        try:
+            home_resolved = home_dir.resolve()
+        except Exception:
+            home_resolved = home_dir
+
+        max_levels = 0
+        try:
+            max_levels = int(getattr(task, "delete_parent_levels", 0) or 0)
+        except (TypeError, ValueError):
+            max_levels = 0
+        if max_levels <= 0:
+            return
+
+        # 是否强制删除非空目录（仍然会保护未到期文件）
+        force_delete_nonempty = bool(getattr(task, "delete_parent_force", False))
+
+        # 复制当前删除队列用于 pending 判断
+        with self._delete_queue_lock:
+            queue_snapshot = list(self.delete_queue)
+
+        processed_dirs: Set[Path] = set()
+
+        for file_path in deleted_files:
+            # 只处理源目录子树内的文件
+            try:
+                fp = Path(file_path)
+            except Exception:
+                continue
+
+            parent = fp.parent
+            level = 1
+
+            while level <= max_levels:
+                cand = parent
+                if cand in processed_dirs:
+                    # 已处理过的目录不必重复
+                    break
+
+                if not cand.exists():
+                    break
+
+                try:
+                    cand_resolved = cand.resolve()
+                except Exception:
+                    cand_resolved = cand
+
+                # 根目录 / 用户主目录 / 任务源目录本身 禁止删除
+                root_of_drive = Path(cand_resolved.anchor) if cand_resolved.anchor else None
+                if (root_of_drive is not None and cand_resolved == root_of_drive) or cand_resolved == home_resolved:
+                    break
+                if cand_resolved == root_resolved:
+                    # 不删除 source_path 本身，停止向上检查
+                    break
+
+                # cand 必须在任务源目录子树内
+                if root_resolved not in cand_resolved.parents:
+                    break
+
+                # 若目录下还有未到删除时间的文件，则暂缓删除
+                if self._has_pending_delete_entries(task_id=task.id, base_dir=cand_resolved, queue_snapshot=queue_snapshot, now=now):
+                    break
+
+                # 非强制模式下，仅在目录物理为空时删除
+                if not force_delete_nonempty:
+                    try:
+                        if any(cand.iterdir()):
+                            break
+                    except Exception:
+                        break
+
+                # 安全删除该目录
+                try:
+                    shutil.rmtree(cand, ignore_errors=False)
+                    delete_stats["dirs_deleted"] += 1
+                    self._log(f"🗑 已删除上级目录: {cand}")
+                except Exception as e:
+                    self._log(f"⚠ 删除上级目录失败: {cand} - {e}")
+                    break
+
+                processed_dirs.add(cand)
+                # 继续向上尝试
+                parent = cand.parent
+                level += 1
+
+    def _has_pending_delete_entries(self, task_id: str, base_dir: Path, queue_snapshot: List[dict], now: datetime) -> bool:
+        """判断指定目录子树下是否存在未到删除时间的记录"""
+        for item in queue_snapshot:
+            if item.get("task_id") != task_id:
+                continue
+            source_path = item.get("source_path")
+            delete_at_str = item.get("delete_at")
+            if not source_path or not delete_at_str:
+                continue
+            try:
+                delete_at = datetime.fromisoformat(delete_at_str)
+            except Exception:
+                continue
+            if delete_at <= now:
+                # 已到期或过期的记录，不视为 pending
+                continue
+            # 判断 source_path 是否在 base_dir 子树内
+            try:
+                sp = Path(source_path)
+                try:
+                    sp_resolved = sp.resolve()
+                except Exception:
+                    sp_resolved = sp
+                if base_dir == sp_resolved or base_dir in sp_resolved.parents:
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _update_progress(self, task_id: str, stats: dict):
         """
-        更新任务进度
-        
-        Args:
             task_id: 任务ID
             stats: 同步统计信息
         """
-        done = stats["success"] + stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"] + stats["failed"]
+        done = stats["success"] + stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"] + stats.get("skipped_filtered", 0) + stats["failed"]
         total = stats["total"]
         percent = (done / total * 100) if total > 0 else 0
         
@@ -99,7 +382,7 @@ class TaskScheduler:
             "done": done,
             "total": total,
             "success": stats["success"],
-            "skipped": stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"],
+            "skipped": stats["skipped_ignored"] + stats["skipped_active"] + stats["skipped_unchanged"] + stats.get("skipped_filtered", 0),
             "failed": stats["failed"],
             "percent": round(percent, 1)
         }
@@ -380,6 +663,12 @@ class TaskScheduler:
                 
                 task = self.tasks[task_id]
                 
+                # 在执行同步前处理该任务已到期的删除队列
+                try:
+                    self._process_delete_queue_for_task(task)
+                except Exception as e:
+                    self._log(f"⚠ 处理删除队列失败: {task.name} - {e}")
+                
                 # 设置当前任务上下文
                 if self.task_context_callback:
                     self.task_context_callback(task_id)
@@ -413,20 +702,32 @@ class TaskScheduler:
                         thread_count=task.thread_count,
                         log_callback=self._log,
                         progress_callback=lambda s: self._update_progress(task_id, s),
-                        is_slow_storage=task.is_slow_storage
+                        is_slow_storage=task.is_slow_storage,
+                        size_min_bytes=task.size_min_bytes,
+                        size_max_bytes=task.size_max_bytes,
+                        suffix_mode=task.suffix_mode,
+                        suffix_list=task.suffix_list,
+                        file_result_callback=lambda src, dst, result: self._on_file_synced(task, src, result)
                     )
+                    
+                    # 同步完成后再次处理该任务删除队列（确保延迟为 0 的记录立即执行）
+                    try:
+                        self._process_delete_queue_for_task(task)
+                    except Exception as e:
+                        self._log(f"⚠ 同步完成后处理删除队列失败: {task.name} - {e}")
                     
                     # 更新状态为 IDLE
                     task.update_status(TaskStatus.IDLE)
                     task.update_last_run_time()
                     
                     # 保存最终统计信息
-                    total_skipped = stats['skipped_ignored'] + stats['skipped_active'] + stats['skipped_unchanged']
+                    total_skipped = stats['skipped_ignored'] + stats['skipped_active'] + stats['skipped_unchanged'] + stats.get('skipped_filtered', 0)
                     self.task_stats[task_id] = {
                         "total": stats['total'],
                         "success": stats['success'],
                         "skipped": total_skipped,
-                        "failed": stats['failed']
+                        "failed": stats['failed'],
+                        "skipped_filtered": stats.get('skipped_filtered', 0)
                     }
                     
                     self._log(
@@ -525,6 +826,10 @@ class TaskScheduler:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
+            # 加载待删除文件队列
+            with self._delete_queue_lock:
+                self.delete_queue = data.get("delete_queue", [])
+            
             self.tasks.clear()
             loaded_count = 0
             failed_count = 0
@@ -559,9 +864,13 @@ class TaskScheduler:
             # 确保配置目录存在
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             
+            with self._delete_queue_lock:
+                delete_queue = list(self.delete_queue)
+            
             data = {
                 "tasks": [task.to_dict() for task in self.tasks.values()],
-                "last_saved": datetime.now().isoformat()
+                "last_saved": datetime.now().isoformat(),
+                "delete_queue": delete_queue
             }
             
             with open(self.config_path, 'w', encoding='utf-8') as f:

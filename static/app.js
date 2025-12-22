@@ -263,6 +263,9 @@ function renderTasks(tasks) {
         let statsInfo = '';
         if (task.stats) {
             const s = task.stats;
+            const filteredInfo = typeof s.skipped_filtered === 'number' && s.skipped_filtered > 0
+                ? `<span><i class="fas fa-filter mr-1"></i>过滤: ${s.skipped_filtered}</span>`
+                : '';
             statsInfo = `
                 <div class="mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded text-xs">
                     <div class="flex items-center gap-3 text-gray-600 dark:text-gray-400">
@@ -270,9 +273,59 @@ function renderTasks(tasks) {
                         <span><i class="fas fa-check text-green-500 mr-1"></i>成功: ${s.success}</span>
                         <span><i class="fas fa-forward text-yellow-500 mr-1"></i>跳过: ${s.skipped}</span>
                         <span><i class="fas fa-times text-red-500 mr-1"></i>失败: ${s.failed}</span>
+                        ${filteredInfo}
                     </div>
                 </div>
             `;
+        }
+        
+        // 过滤规则概览
+        let filterInfo = '';
+        const filterParts = [];
+        if (typeof task.size_min_bytes === 'number') {
+            filterParts.push(`≥ ${Math.round(task.size_min_bytes / (1024 * 1024))} MB`);
+        }
+        if (typeof task.size_max_bytes === 'number') {
+            filterParts.push(`≤ ${Math.round(task.size_max_bytes / (1024 * 1024))} MB`);
+        }
+        if (task.suffix_mode && task.suffix_mode !== 'NONE') {
+            const list = Array.isArray(task.suffix_list) ? task.suffix_list.join(',') : '';
+            if (task.suffix_mode === 'INCLUDE') {
+                filterParts.push(`仅 [${list}]`);
+            } else if (task.suffix_mode === 'EXCLUDE') {
+                filterParts.push(`排除 [${list}]`);
+            }
+        }
+        if (filterParts.length > 0) {
+            filterInfo = `<div class="text-xs text-gray-500 mt-1"><i class="fas fa-filter mr-1"></i>过滤: ${filterParts.join('；')}</div>`;
+        }
+        
+        // 删除源文件配置概览
+        let deleteInfo = '';
+        if (task.delete_source) {
+            const baseLabel = (task.delete_time_base || 'SYNC_COMPLETE') === 'FILE_CREATE' ? '创建时间' : '同步完成时间';
+            let delayLabel = '同步后立即删除';
+            if (typeof task.delete_delay_days === 'number' && task.delete_delay_days > 0) {
+                delayLabel = `${task.delete_delay_days} 天后删除`;
+            }
+            let parentLabel = '';
+            if (task.delete_parent) {
+                parentLabel = '，尝试删除文件目录';
+                const levels = typeof task.delete_parent_levels === 'number' ? task.delete_parent_levels : 0;
+                let levelLabel = '';
+                if (levels === 0) {
+                    levelLabel = '（仅删除文件）';
+                } else if (levels === 1) {
+                    levelLabel = '（删除文件所在目录）';
+                } else if (levels === 2) {
+                    levelLabel = '（删除文件所在目录及上一层）';
+                } else if (levels > 2) {
+                    levelLabel = `（最多向上 ${levels} 层）`;
+                }
+                const forceLabel = task.delete_parent_force ? '，可删除非空目录' : '';
+                parentLabel += levelLabel + forceLabel;
+            }
+            deleteInfo = `<div class="text-xs text-red-500 mt-1"><i class="fas fa-trash-can mr-1"></i>${delayLabel}（基于${baseLabel}${parentLabel}）</div>`;
         }
         
         return `
@@ -299,6 +352,8 @@ function renderTasks(tasks) {
                     <span class="mx-1 text-gray-400">→</span>
                     <div class="flex items-center"><i class="fas fa-folder text-green-500 mr-2"></i><span class="font-mono">${task.target_path}</span></div>
                 </div>
+                ${filterInfo}
+                ${deleteInfo}
             </div>
             <div class="flex items-center gap-4 text-sm text-gray-600 mb-3">
                 ${scheduleInfo}
@@ -417,6 +472,33 @@ function showNotification(message, type = 'info') {
     setTimeout(() => { notification.style.opacity = '0'; setTimeout(() => notification.remove(), 300); }, 3000);
 }
 
+function switchTaskTab(tab) {
+    const basicBtn = document.getElementById('taskTabBasic');
+    const advancedBtn = document.getElementById('taskTabAdvanced');
+    const basicItems = document.querySelectorAll('.task-tab-basic');
+    const advancedItems = document.querySelectorAll('.task-tab-advanced');
+
+    if (!basicBtn || !advancedBtn) return;
+
+    if (tab === 'advanced') {
+        basicBtn.classList.remove('border-blue-500', 'text-blue-600');
+        basicBtn.classList.add('border-transparent', 'text-gray-500');
+        advancedBtn.classList.remove('border-transparent', 'text-gray-500');
+        advancedBtn.classList.add('border-blue-500', 'text-blue-600');
+
+        basicItems.forEach(el => el.classList.add('hidden'));
+        advancedItems.forEach(el => el.classList.remove('hidden'));
+    } else {
+        advancedBtn.classList.remove('border-blue-500', 'text-blue-600');
+        advancedBtn.classList.add('border-transparent', 'text-gray-500');
+        basicBtn.classList.remove('border-transparent', 'text-gray-500');
+        basicBtn.classList.add('border-blue-500', 'text-blue-600');
+
+        basicItems.forEach(el => el.classList.remove('hidden'));
+        advancedItems.forEach(el => el.classList.add('hidden'));
+    }
+}
+
 function showAddTaskModal() {
     // 检查是否有草稿
     const draft = localStorage.getItem('task-draft');
@@ -436,6 +518,35 @@ function showAddTaskModal() {
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
     
+    // 默认切换到基础配置标签页
+    switchTaskTab('basic');
+    
+    // 重置过滤规则
+    const sizeMinInput = document.getElementById('sizeMinMb');
+    const sizeMaxInput = document.getElementById('sizeMaxMb');
+    const suffixModeSelect = document.getElementById('suffixMode');
+    const suffixListInput = document.getElementById('suffixList');
+    const suffixPresetPanel = document.getElementById('suffixPresetPanel');
+    if (sizeMinInput) sizeMinInput.value = '';
+    if (sizeMaxInput) sizeMaxInput.value = '';
+    if (suffixModeSelect) suffixModeSelect.value = 'NONE';
+    if (suffixListInput) suffixListInput.value = '';
+    if (suffixPresetPanel) suffixPresetPanel.style.display = 'none';
+    
+    // 重置删除源文件设置
+    const deleteSourceCheckbox = document.getElementById('deleteSource');
+    const deleteDelayInput = document.getElementById('deleteDelayDays');
+    const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
+    const deleteParentCheckbox = document.getElementById('deleteParentDir');
+    const deleteParentLevelsSelect = document.getElementById('deleteParentLevels');
+    const deleteParentForceCheckbox = document.getElementById('deleteParentForce');
+    if (deleteSourceCheckbox) deleteSourceCheckbox.checked = false;
+    if (deleteDelayInput) deleteDelayInput.value = '';
+    if (deleteTimeBaseSelect) deleteTimeBaseSelect.value = 'SYNC_COMPLETE';
+    if (deleteParentCheckbox) deleteParentCheckbox.checked = false;
+    if (deleteParentLevelsSelect) deleteParentLevelsSelect.value = '1';
+    if (deleteParentForceCheckbox) deleteParentForceCheckbox.checked = false;
+            
     // 重置子规则按钮状态（默认启用「文件不存在」规则）
     ['ruleNotExists', 'ruleSizeDiff', 'ruleMtimeNewer'].forEach(id => {
         const btn = document.getElementById(id);
@@ -619,9 +730,64 @@ async function editTask(taskId) {
             slowStorageCheckbox.checked = task.is_slow_storage || false;
         }
         
+        // 填充过滤规则
+        const sizeMinInput = document.getElementById('sizeMinMb');
+        const sizeMaxInput = document.getElementById('sizeMaxMb');
+        const suffixModeSelect = document.getElementById('suffixMode');
+        const suffixListInput = document.getElementById('suffixList');
+        if (sizeMinInput) {
+            sizeMinInput.value = typeof task.size_min_bytes === 'number' ? Math.round(task.size_min_bytes / (1024 * 1024)) : '';
+        }
+        if (sizeMaxInput) {
+            sizeMaxInput.value = typeof task.size_max_bytes === 'number' ? Math.round(task.size_max_bytes / (1024 * 1024)) : '';
+        }
+        if (suffixModeSelect) {
+            suffixModeSelect.value = (task.suffix_mode || 'NONE').toUpperCase();
+        }
+        if (suffixListInput) {
+            if (Array.isArray(task.suffix_list)) {
+                suffixListInput.value = task.suffix_list.join(',');
+            } else {
+                suffixListInput.value = '';
+            }
+        }
+        
+        // 删除源文件配置
+        const deleteSourceCheckbox = document.getElementById('deleteSource');
+        const deleteDelayInput = document.getElementById('deleteDelayDays');
+        const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
+        const deleteParentCheckbox = document.getElementById('deleteParentDir');
+        const deleteParentLevelsSelect = document.getElementById('deleteParentLevels');
+        const deleteParentForceCheckbox = document.getElementById('deleteParentForce');
+        if (deleteSourceCheckbox) {
+            deleteSourceCheckbox.checked = !!task.delete_source;
+        }
+        if (deleteDelayInput) {
+            deleteDelayInput.value = typeof task.delete_delay_days === 'number' ? task.delete_delay_days : '';
+        }
+        if (deleteTimeBaseSelect) {
+            deleteTimeBaseSelect.value = (task.delete_time_base || 'SYNC_COMPLETE').toUpperCase();
+        }
+        if (deleteParentCheckbox) {
+            deleteParentCheckbox.checked = !!task.delete_parent;
+        }
+        if (deleteParentLevelsSelect) {
+            let levels = typeof task.delete_parent_levels === 'number' ? task.delete_parent_levels : 1;
+            if (!levels || levels < 1) {
+                levels = 1;
+            }
+            deleteParentLevelsSelect.value = String(levels);
+        }
+        if (deleteParentForceCheckbox) {
+            deleteParentForceCheckbox.checked = !!task.delete_parent_force;
+        }
+                        
         // 填充 Cron 表达式
         document.getElementById('cronExpression').value = task.cron_expression || '';
         validateCron();
+        
+        // 编辑时默认展示基础配置标签页
+        switchTaskTab('basic');
         
         document.getElementById('taskModal').classList.add('show');
         initDirectoryAutocomplete();
@@ -648,6 +814,78 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         enabled: true  // 默认启用，后续可通过开关控制
     };
     
+    // 组装过滤规则
+    const sizeMinInput = document.getElementById('sizeMinMb');
+    const sizeMaxInput = document.getElementById('sizeMaxMb');
+    const suffixModeSelect = document.getElementById('suffixMode');
+    const suffixListInput = document.getElementById('suffixList');
+    if (sizeMinInput && sizeMinInput.value !== '') {
+        const v = parseFloat(sizeMinInput.value);
+        if (!Number.isNaN(v) && v >= 0) {
+            taskData.size_min_bytes = Math.round(v * 1024 * 1024);
+        }
+    }
+    if (sizeMaxInput && sizeMaxInput.value !== '') {
+        const v = parseFloat(sizeMaxInput.value);
+        if (!Number.isNaN(v) && v >= 0) {
+            taskData.size_max_bytes = Math.round(v * 1024 * 1024);
+        }
+    }
+    if (suffixModeSelect) {
+        const mode = suffixModeSelect.value || 'NONE';
+        // 始终设置 suffix_mode，包括 NONE 的情况
+        taskData.suffix_mode = mode;
+        
+        if (mode !== 'NONE') {
+            if (suffixListInput && suffixListInput.value.trim() !== '') {
+                taskData.suffix_list = suffixListInput.value
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(s => s.length > 0)
+                    .map(s => s.replace(/^\./, ''));
+            } else {
+                taskData.suffix_list = [];
+            }
+        } else {
+            // mode === 'NONE' 时，显式发送空列表以清除旧的过滤规则
+            taskData.suffix_list = [];
+        }
+    }
+    
+    // 删除源文件配置
+    const deleteSourceCheckbox = document.getElementById('deleteSource');
+    const deleteDelayInput = document.getElementById('deleteDelayDays');
+    const deleteTimeBaseSelect = document.getElementById('deleteTimeBase');
+    const deleteParentCheckbox = document.getElementById('deleteParentDir');
+    const deleteParentLevelsSelect = document.getElementById('deleteParentLevels');
+    const deleteParentForceCheckbox = document.getElementById('deleteParentForce');
+    if (deleteSourceCheckbox && deleteSourceCheckbox.checked) {
+        taskData.delete_source = true;
+        if (deleteDelayInput && deleteDelayInput.value !== '') {
+            const dv = parseInt(deleteDelayInput.value, 10);
+            if (!Number.isNaN(dv)) {
+                taskData.delete_delay_days = dv;
+            }
+        }
+        if (deleteTimeBaseSelect && deleteTimeBaseSelect.value) {
+            taskData.delete_time_base = deleteTimeBaseSelect.value;
+        }
+        if (deleteParentCheckbox && deleteParentCheckbox.checked) {
+            taskData.delete_parent = true;
+            if (deleteParentLevelsSelect && deleteParentLevelsSelect.value !== '') {
+                const lv = parseInt(deleteParentLevelsSelect.value, 10);
+                if (!Number.isNaN(lv)) {
+                    taskData.delete_parent_levels = lv;
+                }
+            }
+            if (deleteParentForceCheckbox) {
+                taskData.delete_parent_force = !!deleteParentForceCheckbox.checked;
+            }
+        }
+    } else {
+        taskData.delete_source = false;
+    }
+        
     if (!taskData.cron_expression) {
         showNotification('Cron 表达式不能为空', 'error');
         return;
@@ -679,11 +917,92 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskThreadCount'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskThreadCount', 'sizeMinMb', 'sizeMaxMb', 'suffixList', 'deleteDelayDays'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener('input', () => { taskFormDirty = true; });
+            el.addEventListener('change', () => { taskFormDirty = true; });
+        }
+    });
+    const checkboxes = ['deleteSource', 'deleteParentDir', 'isSlowStorage'];
+    checkboxes.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => { taskFormDirty = true; });
+        }
+    });
+    const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
+    const deleteParentSimilarityValue = document.getElementById('deleteParentSimilarityValue');
+    const deleteParentCheckbox = document.getElementById('deleteParentDir');
+    if (deleteParentSimilarityInput && deleteParentSimilarityValue) {
+        deleteParentSimilarityInput.addEventListener('input', () => {
+            deleteParentSimilarityValue.textContent = `${deleteParentSimilarityInput.value}%`;
+        });
+    }
+    if (deleteParentCheckbox && deleteParentSimilarityInput) {
+        const syncDeleteParentControls = () => {
+            deleteParentSimilarityInput.disabled = !deleteParentCheckbox.checked;
+            if (!deleteParentCheckbox.checked) {
+                deleteParentSimilarityInput.value = 60;
+                if (deleteParentSimilarityValue) {
+                    deleteParentSimilarityValue.textContent = '60%';
+                }
+            } else if (deleteParentSimilarityValue) {
+                deleteParentSimilarityValue.textContent = `${deleteParentSimilarityInput.value}%`;
+            }
+        };
+        deleteParentCheckbox.addEventListener('change', syncDeleteParentControls);
+        syncDeleteParentControls();
+    }
+    // 后缀输入框预设选择面板
+    const suffixListInput = document.getElementById('suffixList');
+    const suffixModeSelect = document.getElementById('suffixMode');
+    const suffixPresetPanel = document.getElementById('suffixPresetPanel');
+    
+    // 监听 suffixMode 变化，当切换到 NONE 时清空输入框
+    if (suffixModeSelect && suffixListInput) {
+        suffixModeSelect.addEventListener('change', () => {
+            if (suffixModeSelect.value === 'NONE') {
+                suffixListInput.value = '';
+                taskFormDirty = true;
+            }
+        });
+    }
+    
+    if (suffixListInput && suffixPresetPanel) {
+        // 输入框获得焦点时显示面板
+        suffixListInput.addEventListener('focus', () => {
+            suffixPresetPanel.style.display = 'block';
+        });
+        
+        // 点击预设按钮时填充后缀
+        const presetButtons = suffixPresetPanel.querySelectorAll('button[data-suffixes]');
+        presetButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.preventDefault();
+                const suffixes = button.getAttribute('data-suffixes');
+                if (suffixes) {
+                    // 直接替换输入框内容，不合并
+                    suffixListInput.value = suffixes;
+                    // 触发 input 事件标记表单已修改
+                    suffixListInput.dispatchEvent(new Event('input'));
+                    // 隐藏面板
+                    suffixPresetPanel.style.display = 'none';
+                }
+            });
+        });
+        
+        // 点击其他地方时隐藏面板
+        document.addEventListener('click', (e) => {
+            if (!suffixListInput.contains(e.target) && !suffixPresetPanel.contains(e.target)) {
+                suffixPresetPanel.style.display = 'none';
+            }
+        });
+    }
+    ['deleteSource', 'deleteTimeBase', 'deleteParentDir'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
             el.addEventListener('change', () => { taskFormDirty = true; });
         }
     });

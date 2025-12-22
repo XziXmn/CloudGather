@@ -1,7 +1,6 @@
 """
 CloudGather（云集）- 媒体文件同步工具
 使用 Flask + HTML 前端
-Version: 0.2
 """
 
 import atexit
@@ -323,6 +322,30 @@ def api_tasks():
     # 获取调度类型
     schedule_type = data.get('schedule_type', 'INTERVAL')
     
+    # 删除源文件配置
+    delete_source = _parse_bool(data.get('delete_source', False), False)
+    delete_delay_days = None
+    if 'delete_delay_days' in data and data.get('delete_delay_days') not in (None, ''):
+        try:
+            delete_delay_days = int(data.get('delete_delay_days'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': '删除延迟天数必须是整数'}), 400
+        if delete_delay_days < 0:
+            return jsonify({'success': False, 'error': '删除延迟天数不能为负数'}), 400
+    delete_time_base = (data.get('delete_time_base', 'SYNC_COMPLETE') or 'SYNC_COMPLETE').upper()
+    delete_parent = _parse_bool(data.get('delete_parent', False), False)
+    # 删除目录层级：从文件所在目录向上最多尝试删除的层级数（0 表示不删目录）
+    delete_parent_levels = 0
+    if 'delete_parent_levels' in data and data.get('delete_parent_levels') not in (None, ''):
+        try:
+            delete_parent_levels = int(data.get('delete_parent_levels'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': '删除目录层级必须是非负整数'}), 400
+        if delete_parent_levels < 0:
+            return jsonify({'success': False, 'error': '删除目录层级必须是非负整数'}), 400
+    # 强制删除非空目录：就算目录下有未同步的元数据或者其他文件也删除（仍会保护未到期文件）
+    delete_parent_force = _parse_bool(data.get('delete_parent_force', False), False)
+    
     if schedule_type == 'CRON':
         # Cron 调度
         cron_expression = data.get('cron_expression', '').strip()
@@ -347,7 +370,17 @@ def api_tasks():
             rule_not_exists=_parse_bool(data.get('rule_not_exists', False), False),
             rule_size_diff=_parse_bool(data.get('rule_size_diff', False), False),
             rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False),
-            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False)
+            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False),
+            size_min_bytes=data.get('size_min_bytes'),
+            size_max_bytes=data.get('size_max_bytes'),
+            suffix_mode=data.get('suffix_mode', 'NONE'),
+            suffix_list=data.get('suffix_list'),
+            delete_source=delete_source,
+            delete_delay_days=delete_delay_days,
+            delete_time_base=delete_time_base,
+            delete_parent=delete_parent,
+            delete_parent_levels=delete_parent_levels,
+            delete_parent_force=delete_parent_force
         )
     else:
         # 间隔调度
@@ -371,7 +404,17 @@ def api_tasks():
             rule_not_exists=_parse_bool(data.get('rule_not_exists', False), False),
             rule_size_diff=_parse_bool(data.get('rule_size_diff', False), False),
             rule_mtime_newer=_parse_bool(data.get('rule_mtime_newer', False), False),
-            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False)
+            is_slow_storage=_parse_bool(data.get('is_slow_storage', False), False),
+            size_min_bytes=data.get('size_min_bytes'),
+            size_max_bytes=data.get('size_max_bytes'),
+            suffix_mode=data.get('suffix_mode', 'NONE'),
+            suffix_list=data.get('suffix_list'),
+            delete_source=delete_source,
+            delete_delay_days=delete_delay_days,
+            delete_time_base=delete_time_base,
+            delete_parent=delete_parent,
+            delete_parent_levels=delete_parent_levels,
+            delete_parent_force=delete_parent_force
         )
 
     if scheduler.add_task(task):
@@ -421,6 +464,46 @@ def api_task_detail(task_id: str):
         updates['rule_mtime_newer'] = _parse_bool(data['rule_mtime_newer'], task.rule_mtime_newer)
     if 'is_slow_storage' in data:
         updates['is_slow_storage'] = _parse_bool(data['is_slow_storage'], task.is_slow_storage)
+    if 'size_min_bytes' in data:
+        updates['size_min_bytes'] = data['size_min_bytes']
+    if 'size_max_bytes' in data:
+        updates['size_max_bytes'] = data['size_max_bytes']
+    if 'suffix_mode' in data:
+        updates['suffix_mode'] = (data['suffix_mode'] or 'NONE').upper()
+    if 'suffix_list' in data:
+        updates['suffix_list'] = data['suffix_list']
+    if 'delete_source' in data:
+        updates['delete_source'] = _parse_bool(data['delete_source'], getattr(task, 'delete_source', False))
+    if 'delete_delay_days' in data:
+        raw_delay = data['delete_delay_days']
+        if raw_delay in (None, ''):
+            updates['delete_delay_days'] = None
+        else:
+            try:
+                delay_val = int(raw_delay)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': '删除延迟天数必须是整数'}), 400
+            if delay_val < 0:
+                return jsonify({'success': False, 'error': '删除延迟天数不能为负数'}), 400
+            updates['delete_delay_days'] = delay_val
+    if 'delete_time_base' in data:
+        updates['delete_time_base'] = (data['delete_time_base'] or 'SYNC_COMPLETE').upper()
+    if 'delete_parent' in data:
+        updates['delete_parent'] = _parse_bool(data['delete_parent'], getattr(task, 'delete_parent', False))
+    if 'delete_parent_levels' in data:
+        raw_levels = data['delete_parent_levels']
+        if raw_levels in (None, ''):
+            updates['delete_parent_levels'] = 0
+        else:
+            try:
+                levels_val = int(raw_levels)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': '删除目录层级必须是非负整数'}), 400
+            if levels_val < 0:
+                return jsonify({'success': False, 'error': '删除目录层级必须是非负整数'}), 400
+            updates['delete_parent_levels'] = levels_val
+    if 'delete_parent_force' in data:
+        updates['delete_parent_force'] = _parse_bool(data['delete_parent_force'], getattr(task, 'delete_parent_force', False))
 
     # 支持更新 Cron 表达式（用于修改执行时间）
     if 'cron_expression' in data:
