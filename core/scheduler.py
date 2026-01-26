@@ -17,23 +17,33 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
-from core.models import SyncTask, TaskStatus, ScheduleType
+from core.models import SyncTask, TaskStatus, ScheduleType, StrmTask
 from core.worker import FileSyncer
+from core.database import Database
+
+# 配置文件 Schema 版本号，用于兼容旧版配置并做迁移
+CONFIG_SCHEMA_VERSION = 1
 
 
 class TaskScheduler:
-    """任务调度管理器"""
+    """任务调度管理器（支持多任务系统）"""
     
-    def __init__(self, config_path: str = "config/tasks.json"):
+    def __init__(self, config_path: str = "config/tasks.json", strm_config_path: str = "config/strm_tasks.json"):
         """
         初始化调度器
         
         Args:
-            config_path: 任务配置文件路径
+            config_path: 同步任务配置文件路径
+            strm_config_path: STRM 任务配置文件路径
         """
         self.config_path = Path(config_path)
+        self.strm_config_path = Path(strm_config_path)
+        
+        # 任务存储：使用不同的字典分开存储
         self.tasks: Dict[str, SyncTask] = {}  # task_id -> SyncTask
-        self.task_queue = queue.Queue()  # 任务执行队列
+        self.strm_tasks: Dict[str, StrmTask] = {}  # task_id -> StrmTask
+        
+        self.task_queue = queue.Queue()  # 任务执行队列（元组：(system_key, task_id)）
         self.scheduler = BackgroundScheduler()  # APScheduler 后台调度器
         self.consumer_thread: Optional[threading.Thread] = None
         self.is_running = False
@@ -41,12 +51,19 @@ class TaskScheduler:
         self.task_context_callback: Optional[Callable[[Optional[str]], None]] = None  # 任务上下文回调
         self.task_progress: Dict[str, dict] = {}  # 任务进度缓存: task_id -> progress_info
         self.task_stats: Dict[str, dict] = {}  # 任务最终统计信息: task_id -> stats
-        self.delete_queue: List[dict] = []  # 待删除源文件队列
+        
+        # 初始化数据库（SQLite）
+        db_path = self.config_path.parent / "cloudgather.db"
+        self.db = Database(str(db_path))
+        
+        # 向后兼容：保留内存队列（已废弃，仅用于迁移）
+        self.delete_queue: List[dict] = []
         self._delete_queue_lock = threading.Lock()
         
         # 确保配置目录存在
         try:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            self.strm_config_path.parent.mkdir(parents=True, exist_ok=True)
             if self.log_callback:
                 self.log_callback(f"✓ 配置目录已创建: {self.config_path.parent}")
         except Exception as e:
@@ -54,9 +71,11 @@ class TaskScheduler:
         
         # 确保配置文件存在，避免宿主机挂载目录未生成文件
         self._ensure_config_file()
+        self._ensure_strm_config_file()
         
         # 加载已保存的任务
         self.load_tasks()
+        self.load_strm_tasks()
     
     def set_log_callback(self, callback: Callable[[str], None]):
         """
@@ -127,16 +146,17 @@ class TaskScheduler:
             "time_base": base_type,
         }
 
-        # 写入/更新队列
-        with self._delete_queue_lock:
-            updated = False
-            for item in self.delete_queue:
-                if item.get("task_id") == task.id and item.get("source_path") == record["source_path"]:
-                    item.update(record)
-                    updated = True
-                    break
-            if not updated:
-                self.delete_queue.append(record)
+        # 写入数据库（替代内存队列）
+        try:
+            self.db.add_delete_record(
+                task_id=task.id,
+                source_path=str(source_file),
+                delete_at=delete_at.isoformat(),
+                delete_parent=bool(getattr(task, "delete_parent", False)),
+                time_base=base_type
+            )
+        except Exception as e:
+            self._log(f"⚠ 添加删除记录失败: {source_file} - {e}")
 
     def _on_file_synced(self, task: SyncTask, source_file: Path, result: str):
         """单个文件同步完成回调，用于调度删除"""
@@ -149,10 +169,13 @@ class TaskScheduler:
         task_id = task.id
         task_source_root = Path(task.source_path)
 
-        with self._delete_queue_lock:
-            queue_copy = list(self.delete_queue)
+        # 从数据库获取到期记录
+        try:
+            expired_records = self.db.get_expired_records(task_id, now.isoformat())
+        except Exception as e:
+            self._log(f"⚠ 获取删除队列失败: {e}")
+            return
 
-        remaining = []
         # 删除统计
         delete_stats = {
             "files_deleted": 0,
@@ -162,29 +185,14 @@ class TaskScheduler:
         }
         # 本轮成功删除的源文件路径列表（用于后续目录清理）
         deleted_files: List[Path] = []
+        deleted_record_ids: List[int] = []  # 已处理的记录ID
         
-        for item in queue_copy:
-            # 只处理当前任务的记录，其它任务的记录原样保留
-            if item.get("task_id") != task_id:
-                remaining.append(item)
-                continue
+        for record in expired_records:
+            record_id = record.get("id")
+            source_path = record.get("source_path")
+            delete_parent = bool(record.get("delete_parent", False))
 
-            delete_at_str = item.get("delete_at")
-            source_path = item.get("source_path")
-            delete_parent = bool(item.get("delete_parent", False))
-
-            if not delete_at_str or not source_path:
-                continue
-
-            try:
-                delete_at = datetime.fromisoformat(delete_at_str)
-            except Exception:
-                # 删除时间不可解析时丢弃记录
-                continue
-
-            if delete_at > now:
-                # 未到删除时间，保留记录
-                remaining.append(item)
+            if not source_path:
                 continue
 
             path = Path(source_path)
@@ -194,6 +202,7 @@ class TaskScheduler:
                         path.unlink()
                         delete_stats["files_deleted"] += 1
                         deleted_files.append(path)
+                        deleted_record_ids.append(record_id)
                         self._log(f"🗑 已删除源文件: {path}")
                     except IsADirectoryError:
                         # 极端情况：记录的是目录
@@ -201,24 +210,23 @@ class TaskScheduler:
                             shutil.rmtree(path, ignore_errors=False)
                             delete_stats["dirs_deleted"] += 1
                             deleted_files.append(path)
+                            deleted_record_ids.append(record_id)
                             self._log(f"🗑 已删除目录: {path}")
                 else:
                     delete_stats["files_not_exist"] += 1
+                    deleted_record_ids.append(record_id)  # 文件不存在也从队列中移除
                     self._log(f"ℹ 源文件已不存在，跳过: {path}")
             except Exception as e:
                 delete_stats["files_failed"] += 1
                 self._log(f"⚠ 删除源文件失败: {path} - {e}")
-                # 删除失败，保留记录以便下次重试
-                remaining.append(item)
+                # 删除失败不移除记录，下次重试
                 continue
 
-            # 处理上级目录（带删除层级和安全检查）
-            if delete_parent:
-                # 只记录文件路径，目录清理将在循环结束后统一处理
-                pass
-
-        with self._delete_queue_lock:
-            self.delete_queue = remaining
+        # 从数据库中移除已处理的记录
+        try:
+            self.db.remove_delete_records_by_id(deleted_record_ids)
+        except Exception as e:
+            self._log(f"⚠ 清理删除记录失败: {e}")
         
         # 基于本轮成功删除的文件，按任务配置清理上级目录
         try:
@@ -272,10 +280,6 @@ class TaskScheduler:
         # 是否强制删除非空目录（仍然会保护未到期文件）
         force_delete_nonempty = bool(getattr(task, "delete_parent_force", False))
 
-        # 复制当前删除队列用于 pending 判断
-        with self._delete_queue_lock:
-            queue_snapshot = list(self.delete_queue)
-
         processed_dirs: Set[Path] = set()
 
         for file_path in deleted_files:
@@ -315,7 +319,7 @@ class TaskScheduler:
                     break
 
                 # 若目录下还有未到删除时间的文件，则暂缓删除
-                if self._has_pending_delete_entries(task_id=task.id, base_dir=cand_resolved, queue_snapshot=queue_snapshot, now=now):
+                if self._has_pending_delete_entries(task_id=task.id, base_dir=cand_resolved, queue_snapshot=[], now=now):
                     break
 
                 # 非强制模式下，仅在目录物理为空时删除
@@ -342,32 +346,18 @@ class TaskScheduler:
 
     def _has_pending_delete_entries(self, task_id: str, base_dir: Path, queue_snapshot: List[dict], now: datetime) -> bool:
         """判断指定目录子树下是否存在未到删除时间的记录"""
-        for item in queue_snapshot:
-            if item.get("task_id") != task_id:
-                continue
-            source_path = item.get("source_path")
-            delete_at_str = item.get("delete_at")
-            if not source_path or not delete_at_str:
-                continue
-            try:
-                delete_at = datetime.fromisoformat(delete_at_str)
-            except Exception:
-                continue
-            if delete_at <= now:
-                # 已到期或过期的记录，不视为 pending
-                continue
-            # 判断 source_path 是否在 base_dir 子树内
-            try:
-                sp = Path(source_path)
-                try:
-                    sp_resolved = sp.resolve()
-                except Exception:
-                    sp_resolved = sp
-                if base_dir == sp_resolved or base_dir in sp_resolved.parents:
-                    return True
-            except Exception:
-                continue
-        return False
+        # 使用数据库查询
+        try:
+            pending_records = self.db.get_pending_records(
+                task_id=task_id,
+                current_time=now.isoformat(),
+                base_dir=str(base_dir)
+            )
+            return len(pending_records) > 0
+        except Exception as e:
+            self._log(f"⚠ 查询未到期记录失败: {e}")
+            # 出错时保守处理，返回 True 避免误删
+            return True
 
     def _update_progress(self, task_id: str, stats: dict):
         """
@@ -393,8 +383,10 @@ class TaskScheduler:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             if not self.config_path.exists():
                 data = {
+                    "schema_version": CONFIG_SCHEMA_VERSION,
                     "tasks": [],
-                    "last_saved": datetime.now().isoformat()
+                    "last_saved": datetime.now().isoformat(),
+                    "delete_queue": []
                 }
                 self.config_path.write_text(
                     json.dumps(data, indent=2, ensure_ascii=False),
@@ -405,6 +397,25 @@ class TaskScheduler:
             print(f"⚠️ 无法创建配置文件 {self.config_path}: {e}")
             if self.log_callback:
                 self.log_callback(f"⚠️ 无法创建配置文件: {self.config_path} - {e}")
+    
+    def _ensure_strm_config_file(self):
+        """确保 STRM 任务配置文件存在，若缺失则创建空文件"""
+        try:
+            self.strm_config_path.parent.mkdir(parents=True, exist_ok=True)
+            if not self.strm_config_path.exists():
+                data = {
+                    "schema_version": CONFIG_SCHEMA_VERSION,
+                    "tasks": [],
+                    "last_saved": datetime.now().isoformat()
+                }
+                self.strm_config_path.write_text(
+                    json.dumps(data, indent=2, ensure_ascii=False),
+                    encoding='utf-8'
+                )
+        except Exception as e:
+            print(f"⚠️ 无法创建 STRM 配置文件 {self.strm_config_path}: {e}")
+            if self.log_callback:
+                self.log_callback(f"⚠️ 无法创建 STRM 配置文件: {self.strm_config_path} - {e}")
     
     def _validate_task_paths(self, task: SyncTask) -> bool:
         """检查任务的源/目标目录可用性，并在需要时创建目标目录"""
@@ -574,12 +585,13 @@ class TaskScheduler:
         """
         return list(self.tasks.values())
     
-    def _schedule_task(self, task: SyncTask):
+    def _schedule_task(self, task, system_key='sync'):
         """
-        将任务添加到 APScheduler
+        将任务添加到 APScheduler（支持多任务系统）
         
         Args:
-            task: 同步任务对象
+            task: 任务对象（SyncTask 或 StrmTask）
+            system_key: 系统标识（'sync' 或 'strm'）
         """
         # 根据调度类型选择不同的 trigger
         if task.schedule_type == ScheduleType.CRON:
@@ -611,176 +623,285 @@ class TaskScheduler:
             trigger = IntervalTrigger(seconds=task.interval)
             self._log(f"任务已调度 (Interval): {task.name} (间隔: {task.interval}s)")
         
+        # 关键改造：使用 system_key 前缀
+        job_id = f"{system_key}_{task.id}"
+        
         self.scheduler.add_job(
             func=self._on_task_triggered,
             trigger=trigger,
-            id=task.id,
-            args=[task.id],
+            id=job_id,  # 使用前缀后的 job_id
+            args=[task.id, system_key],  # 传递 system_key
             replace_existing=True
         )
     
-    def _on_task_triggered(self, task_id: str):
+    def _on_task_triggered(self, task_id: str, system_key: str = 'sync'):
         """
-        定时器触发回调：将任务加入队列
+        定时器触发回调：将任务加入队列（支持多任务系统）
         
         Args:
             task_id: 任务ID
+            system_key: 系统标识（'sync' 或 'strm'）
         """
-        if task_id not in self.tasks:
+        # 根据 system_key 路由到不同的任务字典
+        if system_key == 'sync':
+            if task_id not in self.tasks:
+                return
+            task = self.tasks[task_id]
+        elif system_key == 'strm':
+            if task_id not in self.strm_tasks:
+                return
+            task = self.strm_tasks[task_id]
+        else:
+            self._log(f"⚠ 未知的任务系统: {system_key}")
             return
-        
-        task = self.tasks[task_id]
         
         # 检查任务状态，避免重复入队
         if task.status == TaskStatus.IDLE:
             # 更新状态为 QUEUED
             task.update_status(TaskStatus.QUEUED)
             
-            # 将任务ID放入队列
-            self.task_queue.put(task_id)
+            # 将任务信息放入队列（元组：(system_key, task_id)）
+            self.task_queue.put((system_key, task_id))
             
-            self._log(f"⏱ 任务已加入队列: {task.name}")
+            self._log(f"⏱ 任务已加入队列: {task.name} [{system_key}]")
         else:
             self._log(f"⚠ 任务仍在执行中，跳过本次调度: {task.name} (状态: {task.status.value})")
     
     def _task_consumer(self):
         """
-        后台任务线程：从队列取出任务并执行同步
+        后台任务线程：从队列取出任务并执行（支持多任务系统）
         """
         self._log("📌 任务线程已启动")
         
         while self.is_running:
             try:
-                # 从队列取出任务ID（超时1秒，避免阻塞关闭）
+                # 从队列取出任务信息（超时1秒，避免阻塞关闭）
                 try:
-                    task_id = self.task_queue.get(timeout=1)
+                    queue_item = self.task_queue.get(timeout=1)
                 except queue.Empty:
                     continue
                 
-                # 获取任务对象
-                if task_id not in self.tasks:
-                    self._log(f"⚠ 任务不存在，跳过: {task_id}")
+                # 解析队列项：(system_key, task_id)
+                if isinstance(queue_item, tuple) and len(queue_item) == 2:
+                    system_key, task_id = queue_item
+                else:
+                    # 向后兼容：旧版本只有 task_id
+                    system_key = 'sync'
+                    task_id = queue_item
+                
+                # 根据 system_key 路由到不同的任务系统
+                if system_key == 'sync':
+                    if task_id not in self.tasks:
+                        self._log(f"⚠ 同步任务不存在，跳过: {task_id}")
+                        self.task_queue.task_done()
+                        continue
+                    task = self.tasks[task_id]
+                    self._execute_sync_task(task)
+                    
+                elif system_key == 'strm':
+                    if task_id not in self.strm_tasks:
+                        self._log(f"⚠ STRM 任务不存在，跳过: {task_id}")
+                        self.task_queue.task_done()
+                        continue
+                    task = self.strm_tasks[task_id]
+                    self._execute_strm_task(task)
+                    
+                else:
+                    self._log(f"⚠ 未知的任务系统: {system_key}")
                     self.task_queue.task_done()
                     continue
-                
-                task = self.tasks[task_id]
-                
-                # 在执行同步前处理该任务已到期的删除队列
-                try:
-                    self._process_delete_queue_for_task(task)
-                except Exception as e:
-                    self._log(f"⚠ 处理删除队列失败: {task.name} - {e}")
-                
-                # 设置当前任务上下文
-                if self.task_context_callback:
-                    self.task_context_callback(task_id)
-                
-                # 更新状态为 RUNNING
-                task.update_status(TaskStatus.RUNNING)
-                self._log(f"▶ 开始执行任务: {task.name}")
-                
-                # 运行前校验路径，并在目标缺失时尝试创建
-                if not self._validate_task_paths(task):
-                    task.update_status(TaskStatus.ERROR)
-                    self._log(f"✗ 路径检查失败，任务终止: {task.name}")
-                    if self.task_context_callback:
-                        self.task_context_callback(None)
-                    self.task_queue.task_done()
-                    self.save_tasks()
-                    continue
-                
-                # 执行同步
-                try:
-                    syncer = FileSyncer(
-                        source_dir=task.source_path,
-                        target_dir=task.target_path
-                    )
-                    
-                    stats = syncer.sync_directory(
-                        overwrite_existing=task.overwrite_existing,
-                        rule_not_exists=task.rule_not_exists,
-                        rule_size_diff=task.rule_size_diff,
-                        rule_mtime_newer=task.rule_mtime_newer,
-                        thread_count=task.thread_count,
-                        log_callback=self._log,
-                        progress_callback=lambda s: self._update_progress(task_id, s),
-                        is_slow_storage=task.is_slow_storage,
-                        size_min_bytes=task.size_min_bytes,
-                        size_max_bytes=task.size_max_bytes,
-                        suffix_mode=task.suffix_mode,
-                        suffix_list=task.suffix_list,
-                        file_result_callback=lambda src, dst, result: self._on_file_synced(task, src, result)
-                    )
-                    
-                    # 同步完成后再次处理该任务删除队列（确保延迟为 0 的记录立即执行）
-                    try:
-                        self._process_delete_queue_for_task(task)
-                    except Exception as e:
-                        self._log(f"⚠ 同步完成后处理删除队列失败: {task.name} - {e}")
-                    
-                    # 更新状态为 IDLE
-                    task.update_status(TaskStatus.IDLE)
-                    task.update_last_run_time()
-                    
-                    # 保存最终统计信息
-                    total_skipped = stats['skipped_ignored'] + stats['skipped_active'] + stats['skipped_unchanged'] + stats.get('skipped_filtered', 0)
-                    self.task_stats[task_id] = {
-                        "total": stats['total'],
-                        "success": stats['success'],
-                        "skipped": total_skipped,
-                        "failed": stats['failed'],
-                        "skipped_filtered": stats.get('skipped_filtered', 0)
-                    }
-                    
-                    self._log(
-                        f"✓ 任务执行完成: {task.name} "
-                        f"(总文件数: {stats['total']} "
-                        f"成功: {stats['success']} "
-                        f"跳过: {total_skipped} "
-                        f"失败: {stats['failed']})"
-                    )
-                    
-                except Exception as e:
-                    # 更新状态为 ERROR
-                    task.update_status(TaskStatus.ERROR)
-                    self._log(f"✗ 任务执行失败: {task.name} - {str(e)}")
-                    import traceback
-                    self._log(f"错误详情: {traceback.format_exc()}")
-                
-                finally:
-                    # 清除任务进度缓存
-                    self.task_progress.pop(task_id, None)
-                    
-                    # 清除任务上下文
-                    if self.task_context_callback:
-                        self.task_context_callback(None)
-                    
-                    # 标记任务完成
-                    self.task_queue.task_done()
-                    
-                    # 保存任务状态
-                    self.save_tasks()
                 
             except Exception as e:
                 self._log(f"任务线程异常: {str(e)}")
                 import traceback
                 self._log(f"错误详情: {traceback.format_exc()}")
-                time.sleep(1)
         
         self._log("📌 任务线程已停止")
     
+    def _execute_sync_task(self, task: SyncTask):
+        """执行同步任务（原有逻辑）"""
+        task_id = task.id
+        
+        # 在执行同步前处理该任务已到期的删除队列
+        try:
+            self._process_delete_queue_for_task(task)
+        except Exception as e:
+            self._log(f"⚠ 处理删除队列失败: {task.name} - {e}")
+        
+        # 设置当前任务上下文
+        if self.task_context_callback:
+            self.task_context_callback(task_id)
+        
+        # 更新状态为 RUNNING
+        task.update_status(TaskStatus.RUNNING)
+        self._log(f"▶ 开始执行任务: {task.name}")
+        
+        # 运行前校验路径，并在目标缺失时尝试创建
+        if not self._validate_task_paths(task):
+            task.update_status(TaskStatus.ERROR)
+            self._log(f"✗ 路径检查失败，任务终止: {task.name}")
+            if self.task_context_callback:
+                self.task_context_callback(None)
+            self.task_queue.task_done()
+            self.save_tasks()
+            return
+        
+        # 执行同步
+        try:
+            syncer = FileSyncer(
+                source_dir=task.source_path,
+                target_dir=task.target_path
+            )
+            
+            # 获取系统重试设置
+            from api.settings import load_system_config
+            system_config = load_system_config()
+            retry_count = system_config.get('sync_retry_count', 3)
+            
+            stats = syncer.sync_directory(
+                overwrite_existing=task.overwrite_existing,
+                rule_not_exists=task.rule_not_exists,
+                rule_size_diff=task.rule_size_diff,
+                rule_mtime_newer=task.rule_mtime_newer,
+                thread_count=task.thread_count,
+                log_callback=self._log,
+                progress_callback=lambda s: self._update_progress(task_id, s),
+                is_slow_storage=task.is_slow_storage,
+                size_min_bytes=task.size_min_bytes,
+                size_max_bytes=task.size_max_bytes,
+                suffix_mode=task.suffix_mode,
+                suffix_list=task.suffix_list,
+                file_result_callback=lambda src, dst, result: self._on_file_synced(task, src, result),
+                retry_count=retry_count
+            )
+            
+            # 同步完成后再次处理该任务删除队列（确保延迟为 0 的记录立即执行）
+            try:
+                self._process_delete_queue_for_task(task)
+            except Exception as e:
+                self._log(f"⚠ 同步完成后处理删除队列失败: {task.name} - {e}")
+            
+            # 更新状态为 IDLE
+            task.update_status(TaskStatus.IDLE)
+            task.update_last_run_time()
+            
+            # 保存最终统计信息
+            total_skipped = stats['skipped_ignored'] + stats['skipped_active'] + stats['skipped_unchanged'] + stats.get('skipped_filtered', 0)
+            self.task_stats[task_id] = {
+                "total": stats['total'],
+                "success": stats['success'],
+                "skipped": total_skipped,
+                "failed": stats['failed'],
+                "skipped_filtered": stats.get('skipped_filtered', 0)
+            }
+            
+            self._log(
+                f"✓ 任务执行完成: {task.name} "
+                f"(总文件数: {stats['total']} "
+                f"成功: {stats['success']} "
+                f"跳过: {total_skipped} "
+                f"失败: {stats['failed']})"
+            )
+            
+        except Exception as e:
+            # 更新状态为 ERROR
+            task.update_status(TaskStatus.ERROR)
+            self._log(f"✗ 任务执行失败: {task.name} - {str(e)}")
+            import traceback
+            self._log(f"错误详情: {traceback.format_exc()}")
+        
+        finally:
+            # 清除任务进度缓存
+            self.task_progress.pop(task_id, None)
+            
+            # 清除任务上下文
+            if self.task_context_callback:
+                self.task_context_callback(None)
+            
+            # 标记任务完成
+            self.task_queue.task_done()
+            
+            # 保存任务状态
+            self.save_tasks()
+    
+    def _execute_strm_task(self, task: StrmTask):
+        """执行 STRM 任务"""
+        task_id = task.id
+        
+        # 设置当前任务上下文
+        if self.task_context_callback:
+            self.task_context_callback(task_id)
+        
+        # 更新状态为 RUNNING
+        task.update_status(TaskStatus.RUNNING)
+        self._log(f"▶ 开始执行 STRM 任务: {task.name}")
+        
+        # 执行 STRM 生成
+        try:
+            from core.strm_generator import StrmGenerator
+            
+            generator = StrmGenerator(
+                task=task,
+                log_callback=self._log
+            )
+            
+            stats = generator.run(
+                progress_callback=lambda s: self._update_progress(task_id, s)
+            )
+            
+            # 更新状态为 IDLE
+            task.update_status(TaskStatus.IDLE)
+            task.update_last_run_time()
+            
+            # 保存统计信息
+            self.task_stats[task_id] = stats
+            
+            self._log(
+                f"✓ STRM 任务完成: {task.name} "
+                f"(总计: {stats['total']} "
+                f"成功: {stats['success']} "
+                f"跳过: {stats['skipped']} "
+                f"失败: {stats['failed']})"
+            )
+            
+        except Exception as e:
+            # 更新状态为 ERROR
+            task.update_status(TaskStatus.ERROR)
+            self._log(f"✗ STRM 任务失败: {task.name} - {str(e)}")
+            import traceback
+            self._log(f"错误详情: {traceback.format_exc()}")
+        
+        finally:
+            # 清除任务进度缓存
+            self.task_progress.pop(task_id, None)
+            
+            # 清除任务上下文
+            if self.task_context_callback:
+                self.task_context_callback(None)
+            
+            # 标记任务完成
+            self.task_queue.task_done()
+            
+            # 保存任务状态
+            self.save_strm_tasks()
+    
     def start(self):
-        """启动调度器和任务线程"""
+        """启动调度器和任务线程（支持多任务系统）"""
         if self.is_running:
             self._log("⚠ 调度器已在运行")
             return
         
         self.is_running = True
         
-        # 为所有启用的任务添加调度
+        # 为所有启用的同步任务添加调度
         for task in self.tasks.values():
             if task.enabled:
-                self._schedule_task(task)
+                self._schedule_task(task, system_key='sync')
+        
+        # 为所有启用的 STRM 任务添加调度
+        for task in self.strm_tasks.values():
+            if task.enabled:
+                self._schedule_task(task, system_key='strm')
         
         # 启动 APScheduler
         self.scheduler.start()
@@ -793,7 +914,8 @@ class TaskScheduler:
         )
         self.consumer_thread.start()
         
-        self._log(f"✓ 调度器已启动 (任务数: {len(self.tasks)})")
+        total_tasks = len(self.tasks) + len(self.strm_tasks)
+        self._log(f"✓ 调度器已启动 (同步任务: {len(self.tasks)}, STRM 任务: {len(self.strm_tasks)}, 总计: {total_tasks})")
     
     def stop(self):
         """停止调度器和任务线程"""
@@ -815,11 +937,44 @@ class TaskScheduler:
         
         # 保存任务状态
         self.save_tasks()
+        self.save_strm_tasks()
         
         self._log("✓ 调度器已停止")
     
+    def _migrate_v0_to_v1(self, data: dict) -> dict:
+        """将无 schema_version 的旧配置迁移到 v1 结构
+        - 确保 tasks 为列表
+        - 确保 delete_queue 为列表
+        """
+        if not isinstance(data.get("tasks"), list):
+            data["tasks"] = []
+        if not isinstance(data.get("delete_queue"), list):
+            data["delete_queue"] = []
+        return data
+
+    def _migrate_config(self, data: dict) -> dict:
+        """根据 schema_version 对配置数据进行迁移"""
+        old_version = data.get("schema_version", 0)
+        try:
+            version = int(old_version or 0)
+        except (TypeError, ValueError):
+            version = 0
+
+        # 目前仅有 v0 -> v1 的迁移
+        if version < 1:
+            data = self._migrate_v0_to_v1(data)
+            version = 1
+            try:
+                self._log(f"ℹ️ 检测到旧版配置，已从 schema_version {old_version} 迁移到 {version}")
+            except Exception:
+                pass
+
+        # 将版本号提升到当前版本
+        data["schema_version"] = CONFIG_SCHEMA_VERSION
+        return data
+
     def load_tasks(self):
-        """从配置文件加载任务"""
+        """从配置文件加载同步任务"""
         try:
             if not self.config_path.exists():
                 self._log(f"ℹ️ 配置文件不存在，使用空任务列表")
@@ -827,11 +982,29 @@ class TaskScheduler:
             
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
-            # 加载待删除文件队列
+
+            # 根据 schema_version 对配置进行迁移，兼容旧版本
+            data = self._migrate_config(data)
+
+            # 迁移删除队列从 JSON 到 SQLite（一次性迁移）
+            if self.db.get_config("delete_queue_migrated") != "true":
+                json_delete_queue = data.get("delete_queue", [])
+                if json_delete_queue:
+                    try:
+                        migrated_count = self.db.migrate_from_json(json_delete_queue)
+                        self._log(f"✓ 已迁移 {migrated_count} 条删除记录到数据库")
+                        self.db.set_config("delete_queue_migrated", "true")
+                        self.db.set_config("migration_time", datetime.now().isoformat())
+                    except Exception as e:
+                        self._log(f"⚠ 迁移删除队列失败: {e}")
+                else:
+                    # 没有旧数据需要迁移，直接标记为已迁移
+                    self.db.set_config("delete_queue_migrated", "true")
+
+            # 加载待删除文件队列（已废弃，保留用于向后兼容）
             with self._delete_queue_lock:
-                self.delete_queue = data.get("delete_queue", [])
-            
+                self.delete_queue = []  # 不再从 JSON 加载，改用数据库
+
             self.tasks.clear()
             loaded_count = 0
             failed_count = 0
@@ -853,35 +1026,96 @@ class TaskScheduler:
             if failed_count > 0:
                 self._log(f"⚠️ 有 {failed_count} 个任务加载失败")
             
-            self._log(f"✓ 已加载 {loaded_count} 个任务")
+            self._log(f"✓ 已加载 {loaded_count} 个同步任务")
             
         except Exception as e:
-            self._log(f"✗ 加载任务配置失败: {str(e)}")
+            self._log(f"✗ 加载同步任务配置失败: {str(e)}")
+            import traceback
+            self._log(f"错误详情: {traceback.format_exc()}")
+    
+    def load_strm_tasks(self):
+        """从配置文件加载 STRM 任务"""
+        try:
+            if not self.strm_config_path.exists():
+                self._log(f"ℹ️ STRM 配置文件不存在，使用空任务列表")
+                return
+            
+            with open(self.strm_config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # 根据 schema_version 对配置进行迁移
+            data = self._migrate_config(data)
+            
+            self.strm_tasks.clear()
+            loaded_count = 0
+            failed_count = 0
+            
+            for task_data in data.get("tasks", []):
+                try:
+                    task = StrmTask.from_dict(task_data)
+                    # 重置状态为 IDLE
+                    task.update_status(TaskStatus.IDLE)
+                    self.strm_tasks[task.id] = task
+                    loaded_count += 1
+                    
+                except Exception as e:
+                    task_name = task_data.get('name', '未知 STRM 任务')
+                    self._log(f"✗ 加载 STRM 任务失败: {task_name} - {str(e)}")
+                    failed_count += 1
+            
+            if failed_count > 0:
+                self._log(f"⚠️ 有 {failed_count} 个 STRM 任务加载失败")
+            
+            self._log(f"✓ 已加载 {loaded_count} 个 STRM 任务")
+            
+        except Exception as e:
+            self._log(f"✗ 加载 STRM 任务配置失败: {str(e)}")
             import traceback
             self._log(f"错误详情: {traceback.format_exc()}")
     
     def save_tasks(self):
-        """保存任务到配置文件"""
+        """保存同步任务到配置文件（删除队列已迁移到数据库，不再保存到 JSON）"""
         try:
             # 确保配置目录存在
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with self._delete_queue_lock:
-                delete_queue = list(self.delete_queue)
-            
+
             data = {
+                "schema_version": CONFIG_SCHEMA_VERSION,
                 "tasks": [task.to_dict() for task in self.tasks.values()],
                 "last_saved": datetime.now().isoformat(),
-                "delete_queue": delete_queue
+                # 删除队列已迁移到数据库，JSON 中只保留空数组（向后兼容）
+                "delete_queue": []
             }
-            
+
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             
-            self._log(f"💾 配置已保存")
+            # self._log(f"💾 同步任务配置已保存")
             
         except Exception as e:
-            self._log(f"✗ 保存任务配置失败: {str(e)}")
+            self._log(f"✗ 保存同步任务配置失败: {str(e)}")
+            import traceback
+            self._log(f"错误详情: {traceback.format_exc()}")
+    
+    def save_strm_tasks(self):
+        """保存 STRM 任务到配置文件"""
+        try:
+            # 确保配置目录存在
+            self.strm_config_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            data = {
+                "schema_version": CONFIG_SCHEMA_VERSION,
+                "tasks": [task.to_dict() for task in self.strm_tasks.values()],
+                "last_saved": datetime.now().isoformat()
+            }
+            
+            with open(self.strm_config_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            # self._log(f"💾 STRM 任务配置已保存")
+            
+        except Exception as e:
+            self._log(f"✗ 保存 STRM 任务配置失败: {str(e)}")
             import traceback
             self._log(f"错误详情: {traceback.format_exc()}")
     
@@ -949,3 +1183,8 @@ class TaskScheduler:
         """析构函数：确保资源清理"""
         if self.is_running:
             self.stop()
+        # 关闭数据库连接
+        try:
+            self.db.close()
+        except Exception:
+            pass
