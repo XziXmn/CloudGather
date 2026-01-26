@@ -195,6 +195,38 @@
 
         .progress-bar { height: 10px; background: var(--muted); border-radius: 999px; overflow: hidden; }
         .progress-fill { height: 100%; background: var(--primary); transition: width 0.3s ease; }
+        
+        /* Task Tab 样式 */
+        .task-tab {
+            padding: 12px 20px;
+            border: none;
+            background: transparent;
+            color: var(--subtext);
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .task-tab:hover {
+            color: var(--primary);
+            background: rgba(91, 139, 255, 0.05);
+        }
+        .task-tab.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+        .task-panel {
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
 
         .view { display: none; }
         .view.active { display: block; }
@@ -258,7 +290,8 @@
             </div>
             <div class="nav-item active" data-view="dashboard" onclick="switchView('dashboard', this)" data-title="仪表盘"><i class="fas fa-gauge"></i><span>仪表盘</span></div>
             <div class="nav-item" data-view="tasks" onclick="switchView('tasks', this)" data-title="任务列表"><i class="fas fa-clipboard-list"></i><span>任务列表</span></div>
-            <div class="nav-item" data-view="settings" onclick="switchView('settings', this)" data-title="关于"><i class="fas fa-info-circle"></i><span>关于</span></div>
+            <div class="nav-item" data-view="system-settings" onclick="switchView('system-settings', this)" data-title="系统设置"><i class="fas fa-cog"></i><span>系统设置</span></div>
+            <div class="nav-item" data-view="about" onclick="switchView('about', this)" data-title="关于"><i class="fas fa-info-circle"></i><span>关于</span></div>
             <div class="hitokoto-section">
                 <div class="hitokoto-text" id="hitokoto-display">
                     <span style="opacity: 0.4;">“</span>
@@ -353,15 +386,193 @@
 
                 <section id="view-tasks" class="view space-y-4">
                     <div class="flex items-center justify-between mb-4">
-                        <h2 class="text-2xl font-bold">任务列表</h2>
-                        <button onclick="showAddTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加任务</button>
+                        <h2 class="text-2xl font-bold">任务管理</h2>
                     </div>
-                    <div id="tasks-container" class="space-y-2 card">
-                        <div class="text-center py-12 text-gray-400"><i class="fas fa-inbox text-5xl mb-4"></i><p>暂无任务</p></div>
+                    
+                    <!-- 任务类型 Tab 切换 -->
+                    <div class="card mb-4">
+                        <div class="flex items-center gap-2 border-b border-gray-200 pb-0">
+                            <button id="tab-sync" class="task-tab active" onclick="switchMainTab('sync')">
+                                <i class="fas fa-sync"></i>
+                                <span>同步任务</span>
+                            </button>
+                            <button id="tab-strm" class="task-tab" onclick="switchMainTab('strm')">
+                                <i class="fas fa-video"></i>
+                                <span>STRM 任务</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 同步任务面板 -->
+                    <div id="sync-tasks-panel" class="task-panel">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-semibold">同步任务列表</h3>
+                            <button onclick="showAddTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加同步任务</button>
+                        </div>
+                        <div id="tasks-container" class="space-y-2 card">
+                            <div class="text-center py-12 text-gray-400"><i class="fas fa-inbox text-5xl mb-4"></i><p>暂无同步任务</p></div>
+                        </div>
+                    </div>
+                    
+                    <!-- STRM 任务面板 -->
+                    <div id="strm-tasks-panel" class="task-panel" style="display: none;">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-semibold">STRM 任务列表</h3>
+                            <button onclick="showAddStrmTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加 STRM 任务</button>
+                        </div>
+                        <div id="strm-tasks-container" class="space-y-2 card">
+                            <div class="text-center py-12 text-gray-400"><i class="fas fa-video text-5xl mb-4"></i><p>暂无 STRM 任务</p></div>
+                        </div>
                     </div>
                 </section>
 
-                <section id="view-settings" class="view space-y-4">
+                <section id="view-system-settings" class="view space-y-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-2xl font-bold">系统设置</h2>
+                        <button onclick="saveAllSettings()" class="btn btn-primary">
+                            <i class="fas fa-save mr-2"></i>保存所有设置
+                        </button>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+                        <!-- OpenList 服务器配置 -->
+                        <div class="card">
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <h3 class="font-bold text-lg flex items-center gap-2">
+                                        <i class="fas fa-server text-blue-500"></i>OpenList 服务器配置
+                                    </h3>
+                                    <p class="text-sm text-gray-500 mt-1">配置 OpenList 服务器连接信息，用于 STRM 任务</p>
+                                </div>
+                            </div>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm text-gray-600 mb-2">服务器地址 *</label>
+                                    <input type="text" id="openlist-url" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="http://localhost:5244" value="">
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <i class="fas fa-info-circle"></i> OpenList 服务器的完整地址，包括协议和端口
+                                    </p>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">用户名</label>
+                                    <input type="text" id="openlist-username" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="admin" value="">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">密码</label>
+                                    <input type="password" id="openlist-password" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="输入密码" value="">
+                                </div>
+                                
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm text-gray-600 mb-2">Token <span class="text-xs text-gray-400">(可选，如已有 Token 可直接填写)</span></label>
+                                    <input type="text" id="openlist-token" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white font-mono text-sm" placeholder="留空将使用用户名密码登录获取" value="">
+                                </div>
+                                
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm text-gray-600 mb-2">公共访问地址 <span class="text-xs text-gray-400">(可选，用于生成 .strm 文件中的链接)</span></label>
+                                    <input type="text" id="openlist-public-url" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="https://your-public-domain.com" value="">
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <i class="fas fa-info-circle"></i> 如果设置，生成的 .strm 文件将使用此地址替代服务器地址，适合外网访问场景
+                                    </p>
+                                </div>
+                                
+                                <div class="md:col-span-2 mt-2">
+                                    <button onclick="testOpenListConnection()" class="btn btn-secondary text-sm">
+                                        <i class="fas fa-plug"></i>测试连接
+                                    </button>
+                                    <span id="openlist-connection-status" class="ml-3 text-sm"></span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 文件扩展名设置 -->
+                        <div class="card">
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <h3 class="font-bold text-lg flex items-center gap-2">
+                                        <i class="fas fa-file-code text-purple-500"></i>文件扩展名设置
+                                    </h3>
+                                    <p class="text-sm text-gray-500 mt-1">配置 STRM 任务同步的额外文件类型</p>
+                                </div>
+                            </div>
+                            
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">字幕文件扩展名</label>
+                                    <input type="text" id="subtitle-extensions" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-purple-400 outline-none bg-white font-mono text-sm" 
+                                           placeholder=".srt,.ass,.ssa,.sub,.vtt" value=".srt,.ass,.ssa,.sub,.vtt">
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <i class="fas fa-info-circle"></i> 以英文逗号分隔，必须以点开头
+                                    </p>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">图片文件扩展名</label>
+                                    <input type="text" id="image-extensions" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-purple-400 outline-none bg-white font-mono text-sm" 
+                                           placeholder=".jpg,.jpeg,.png,.bmp,.gif,.webp" value=".jpg,.jpeg,.png,.bmp,.gif,.webp">
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <i class="fas fa-info-circle"></i> 用于同步海报、封面等图片文件
+                                    </p>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">NFO 文件扩展名</label>
+                                    <input type="text" id="nfo-extensions" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-purple-400 outline-none bg-white font-mono text-sm" 
+                                           placeholder=".nfo" value=".nfo">
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <i class="fas fa-info-circle"></i> 媒体元数据文件
+                                    </p>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">其他自定义扩展名 <span class="text-xs text-gray-400">(可选)</span></label>
+                                    <input type="text" id="other-extensions" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-purple-400 outline-none bg-white font-mono text-sm" 
+                                           placeholder="例如: .xml,.json" value="">
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <i class="fas fa-info-circle"></i> 除了上述类型外需要同步的其他文件类型
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 同步安全设置 -->
+                        <div class="card lg:col-span-2">
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <h3 class="font-bold text-lg flex items-center gap-2">
+                                        <i class="fas fa-shield-halved text-green-500"></i>同步安全设置
+                                    </h3>
+                                    <p class="text-sm text-gray-500 mt-1">配置同步失败重试及自动清理机制</p>
+                                </div>
+                            </div>
+                            
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">文件同步失败重试次数</label>
+                                    <div class="flex items-center gap-3">
+                                        <input type="number" id="system-retry-count" class="w-32 px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-green-400 outline-none bg-white" 
+                                               min="0" max="10" placeholder="3" value="3">
+                                        <span class="text-sm text-gray-500">次 (默认 3 次)</span>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-2">
+                                        <i class="fas fa-info-circle"></i> 当文件同步失败时自动重新尝试。如果超过次数仍失败，该文件将暂时不计入删除列表。
+                                    </p>
+                                </div>
+                                
+                                <div class="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                                    <p class="text-xs text-blue-700 flex items-start gap-2">
+                                        <i class="fas fa-magic mt-0.5"></i>
+                                        <span>系统已默认开启<b>启动前清理机制</b>：每次同步任务开始前，将自动检测并清理目标文件夹中未完成的临时文件（.tmp_*），确保任务可靠性。</span>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="view-about" class="view space-y-4">
                     <h2 class="text-2xl font-bold mb-4">关于</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="card">
@@ -710,5 +921,8 @@ Cron 表达式 * <span class="text-xs text-gray-400">(格式: 分 时 日 月 �
     <div id="log-root"></div>
 
     <script src="/static/app.js"></script>
+    <script src="/static/app-logs.js"></script>
+    <script src="/static/app-directory.js"></script>
+    <script src="/static/app-strm.js"></script>
 </body>
 </html>

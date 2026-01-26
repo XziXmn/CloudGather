@@ -22,6 +22,13 @@ class TaskStatus(Enum):
     ERROR = "ERROR"         # 执行出错
 
 
+class StrmMode(Enum):
+    """STRM 文件生成模式枚举"""
+    ALIST_URL = "AlistURL"      # Alist 下载链接
+    RAW_URL = "RawURL"          # 真实源站链接
+    ALIST_PATH = "AlistPath"    # Alist 路径
+
+
 class SyncTask:
     """同步任务数据模型"""
     
@@ -51,7 +58,6 @@ class SyncTask:
         delete_delay_days: Optional[int] = None,  # 删除延迟天数，0 表示同步完成后立即删除
         delete_time_base: str = "SYNC_COMPLETE",  # 删除时间基准：SYNC_COMPLETE / FILE_CREATE
         delete_parent: bool = False,  # 是否同时尝试删除上级目录
-        delete_parent_similarity: int = 60,  # 上级目录名与文件名共同前缀占比阈值(0-100)，已废弃
         delete_parent_levels: int = 0,  # 从文件所在目录向上最多尝试删除的层级数（0 表示不删目录）
         delete_parent_force: bool = False  # 是否强制删除非空目录，就算目录下有未同步的元数据或者其他文件也删除
     ):
@@ -111,15 +117,6 @@ class SyncTask:
         self.delete_delay_days = delete_delay_days
         self.delete_time_base = (delete_time_base or "SYNC_COMPLETE").upper()
         self.delete_parent = delete_parent
-        try:
-            similarity = int(delete_parent_similarity)
-        except (TypeError, ValueError):
-            similarity = 60
-        if similarity < 0:
-            similarity = 0
-        if similarity > 100:
-            similarity = 100
-        self.delete_parent_similarity = similarity
         # 目录删除层级（非负整数）
         try:
             levels = int(delete_parent_levels)
@@ -164,7 +161,6 @@ class SyncTask:
             "delete_delay_days": self.delete_delay_days,
             "delete_time_base": self.delete_time_base,
             "delete_parent": self.delete_parent,
-            "delete_parent_similarity": self.delete_parent_similarity,
             "delete_parent_levels": self.delete_parent_levels,
             "delete_parent_force": self.delete_parent_force
         }
@@ -205,7 +201,6 @@ class SyncTask:
             delete_delay_days=data.get("delete_delay_days"),
             delete_time_base=data.get("delete_time_base", "SYNC_COMPLETE"),
             delete_parent=data.get("delete_parent", False),
-            delete_parent_similarity=data.get("delete_parent_similarity", 60),
             delete_parent_levels=data.get("delete_parent_levels", 0),
             delete_parent_force=data.get("delete_parent_force", False)
         )
@@ -227,6 +222,236 @@ class SyncTask:
         """字符串表示"""
         return (
             f"SyncTask(id={self.id}, name={self.name}, "
+            f"status={self.status.value}, interval={self.interval}s)"
+        )
+    
+    def __str__(self) -> str:
+        """用户友好的字符串表示"""
+        return f"[{self.status.value}] {self.name} ({self.interval}s)"
+
+
+class StrmTask:
+    """STRM 任务数据模型"""
+    
+    def __init__(
+        self,
+        name: str,
+        source_dir: str,
+        target_dir: str,
+        interval: int = 3600,  # 默认 1 小时
+        schedule_type: str = "INTERVAL",
+        cron_expression: Optional[str] = None,
+        task_id: Optional[str] = None,
+        status: str = "IDLE",
+        last_run_time: Optional[str] = None,
+        enabled: bool = True,
+        # OpenList 服务器配置（优先使用任务配置，为空则使用全局配置）
+        openlist_url: Optional[str] = None,
+        openlist_username: Optional[str] = None,
+        openlist_password: Optional[str] = None,
+        openlist_token: Optional[str] = None,
+        openlist_public_url: Optional[str] = None,
+        # STRM 生成配置
+        mode: str = "AlistURL",  # STRM 生成模式
+        flatten_mode: bool = False,  # 是否扁平化目录结构
+        subtitle: bool = False,  # 是否同步字幕文件
+        image: bool = False,  # 是否同步图片文件
+        nfo: bool = False,  # 是否同步 NFO 文件
+        overwrite: bool = False,  # 是否覆盖已存在的 STRM 文件
+        other_ext: Optional[str] = None,  # 其他需要同步的扩展名（逗号分隔）
+        # 性能配置
+        max_workers: int = 50,  # 最大并发数
+        max_downloaders: int = 5,  # 最大下载并发数
+        wait_time: float = 0,  # 请求间隔等待时间（秒）
+        # 同步配置
+        sync_server: bool = False,  # 是否同步服务器上的删除操作
+        sync_local_delete: bool = False,  # 是否同步本地删除到服务器
+        sync_ignore: Optional[str] = None,  # 忽略同步的路径（正则表达式）
+        suffix_mode: str = "NONE",  # 后缀过滤模式
+        suffix_list: Optional[list] = None,  # 后缀列表
+        # 智能保护配置
+        smart_protection: Optional[Dict[str, Any]] = None  # 智能删除保护配置
+    ):
+        """
+        初始化 STRM 任务
+        
+        Args:
+            name: 任务名称
+            source_dir: OpenList 源目录路径（如 /Movies）
+            target_dir: 本地目标目录路径（生成 .strm 文件的位置）
+            interval: 同步间隔（秒），当 schedule_type=INTERVAL 时有效
+            schedule_type: 调度类型（INTERVAL 或 CRON）
+            cron_expression: Cron 表达式，当 schedule_type=CRON 时使用
+            task_id: 任务唯一标识符（UUID），不提供则自动生成
+            status: 任务状态
+            last_run_time: 上次运行时间（ISO格式字符串）
+            enabled: 是否启用任务
+            openlist_url: OpenList 服务器地址（留空则使用全局配置）
+            openlist_username: OpenList 用户名（留空则使用全局配置）
+            openlist_password: OpenList 密码（留空则使用全局配置）
+            openlist_token: OpenList Token（留空则使用全局配置）
+            openlist_public_url: 公共访问地址（留空则使用全局配置）
+            mode: STRM 生成模式（AlistURL/RawURL/AlistPath）
+            flatten_mode: 是否扁平化目录结构
+            subtitle: 是否同步字幕文件
+            image: 是否同步图片文件
+            nfo: 是否同步 NFO 文件
+            overwrite: 是否覆盖已存在的 STRM 文件
+            other_ext: 其他需要同步的扩展名（逗号分隔）
+            max_workers: 最大并发数
+            max_downloaders: 最大下载并发数
+            wait_time: 请求间隔等待时间（秒）
+            sync_server: 是否同步服务器上的删除操作
+            sync_ignore: 忽略同步的路径（正则表达式）
+            smart_protection: 智能删除保护配置，格式如 {"threshold": 100, "grace_scans": 3}
+        """
+        self.id = task_id if task_id else str(uuid.uuid4())
+        self.name = name
+        self.source_dir = source_dir
+        self.target_dir = target_dir
+        self.interval = interval
+        self.schedule_type = ScheduleType[schedule_type] if isinstance(schedule_type, str) else schedule_type
+        self.cron_expression = cron_expression
+        self.status = TaskStatus[status] if isinstance(status, str) else status
+        self.last_run_time = last_run_time
+        self.enabled = enabled
+        
+        # OpenList 服务器配置
+        self.openlist_url = openlist_url
+        self.openlist_username = openlist_username
+        self.openlist_password = openlist_password
+        self.openlist_token = openlist_token
+        self.openlist_public_url = openlist_public_url
+        
+        # STRM 生成配置
+        self.mode = StrmMode[mode.upper().replace("ALIST", "ALIST_")] if isinstance(mode, str) else mode
+        self.flatten_mode = flatten_mode
+        self.subtitle = subtitle
+        self.image = image
+        self.nfo = nfo
+        self.overwrite = overwrite
+        self.other_ext = other_ext
+        
+        # 性能配置
+        self.max_workers = max(1, max_workers)
+        self.max_downloaders = max(1, max_downloaders)
+        self.wait_time = max(0, wait_time)
+        
+        # 同步配置
+        self.sync_server = sync_server
+        self.sync_local_delete = sync_local_delete
+        self.sync_ignore = sync_ignore
+        
+        # 兼容同步任务的过滤配置
+        self.suffix_mode = (suffix_mode or "NONE").upper()
+        self.suffix_list = [s.lower().lstrip(".") for s in suffix_list] if suffix_list else []
+        
+        # 智能保护配置
+        self.smart_protection = smart_protection or {"threshold": 100, "grace_scans": 3}
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        将任务对象转换为字典，用于 JSON 序列化
+        
+        Returns:
+            包含任务所有字段的字典
+        """
+        return {
+            "id": self.id,
+            "name": self.name,
+            "source_dir": self.source_dir,
+            "target_dir": self.target_dir,
+            "interval": self.interval,
+            "schedule_type": self.schedule_type.value,
+            "cron_expression": self.cron_expression,
+            "status": self.status.value,
+            "last_run_time": self.last_run_time,
+            "enabled": self.enabled,
+            "openlist_url": self.openlist_url,
+            "openlist_username": self.openlist_username,
+            "openlist_password": self.openlist_password,
+            "openlist_token": self.openlist_token,
+            "openlist_public_url": self.openlist_public_url,
+            "mode": self.mode.value,
+            "flatten_mode": self.flatten_mode,
+            "subtitle": self.subtitle,
+            "image": self.image,
+            "nfo": self.nfo,
+            "overwrite": self.overwrite,
+            "other_ext": self.other_ext,
+            "max_workers": self.max_workers,
+            "max_downloaders": self.max_downloaders,
+            "wait_time": self.wait_time,
+            "sync_server": self.sync_server,
+            "sync_local_delete": self.sync_local_delete,
+            "sync_ignore": self.sync_ignore,
+            "suffix_mode": self.suffix_mode,
+            "suffix_list": self.suffix_list,
+            "smart_protection": self.smart_protection
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'StrmTask':
+        """
+        从字典创建任务对象，用于 JSON 反序列化
+        
+        Args:
+            data: 包含任务字段的字典
+            
+        Returns:
+            StrmTask 实例
+        """
+        return cls(
+            task_id=data.get("id"),
+            name=data["name"],
+            source_dir=data["source_dir"],
+            target_dir=data["target_dir"],
+            interval=data.get("interval", 3600),
+            schedule_type=data.get("schedule_type", "INTERVAL"),
+            cron_expression=data.get("cron_expression"),
+            status=data.get("status", "IDLE"),
+            last_run_time=data.get("last_run_time"),
+            enabled=data.get("enabled", True),
+            openlist_url=data.get("openlist_url"),
+            openlist_username=data.get("openlist_username"),
+            openlist_password=data.get("openlist_password"),
+            openlist_token=data.get("openlist_token"),
+            openlist_public_url=data.get("openlist_public_url"),
+            mode=data.get("mode", "AlistURL"),
+            flatten_mode=data.get("flatten_mode", False),
+            subtitle=data.get("subtitle", False),
+            image=data.get("image", False),
+            nfo=data.get("nfo", False),
+            overwrite=data.get("overwrite", False),
+            other_ext=data.get("other_ext"),
+            max_workers=data.get("max_workers", 50),
+            max_downloaders=data.get("max_downloaders", 5),
+            wait_time=data.get("wait_time", 0),
+            sync_server=data.get("sync_server", False),
+            sync_local_delete=data.get("sync_local_delete", False),
+            sync_ignore=data.get("sync_ignore"),
+            suffix_mode=data.get("suffix_mode", "NONE"),
+            suffix_list=data.get("suffix_list", []),
+            smart_protection=data.get("smart_protection", {"threshold": 100, "grace_scans": 3})
+        )
+    
+    def update_status(self, new_status: TaskStatus):
+        """
+        更新任务状态
+        
+        Args:
+            new_status: 新的任务状态
+        """
+        self.status = new_status
+    
+    def update_last_run_time(self):
+        """更新上次运行时间为当前时间"""
+        self.last_run_time = datetime.now().isoformat()
+    
+    def __repr__(self) -> str:
+        """字符串表示"""
+        return (
+            f"StrmTask(id={self.id}, name={self.name}, "
             f"status={self.status.value}, interval={self.interval}s)"
         )
     

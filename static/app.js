@@ -4,9 +4,6 @@ let lastTasksData = null;
 let tasksCache = [];
 let queueCache = [];
 let currentView = 'dashboard';
-const logWindows = new Map(); // logId -> element
-const logCache = {}; // 本地缓存各日志内容
-const logAutoScroll = {}; // 记录每个日志窗口是否自动滚动
 let taskFormDirty = false; // 表单是否已修改
 let directoryCache = {}; // 目录缓存
 
@@ -54,65 +51,19 @@ function switchView(view, navEl = null) {
 
     if (view === 'tasks') {
         loadTasks();
-    } else if (view === 'settings') {
+    } else if (view === 'about') {
         loadSystemStatus();
     } else if (view === 'dashboard') {
         loadSystemStatus();
         loadTasks();
+    } else if (view === 'system-settings') {
+        loadOpenListConfig();
+        loadFileExtensions();
+        loadSystemConfig();
     }
 }
 
-function openLogWindow(logId, title) {
-    if (logWindows.has(logId)) {
-        logWindows.get(logId).classList.add('show');
-        return;
-    }
-    const root = document.getElementById('log-root');
-    const modal = document.createElement('div');
-    modal.className = 'log-modal show';
-    modal.dataset.logId = logId;
-    modal.innerHTML = `
-        <div class="log-card" onclick="event.stopPropagation()">
-            <div class="log-header">
-                <div class="flex items-center gap-2">
-                    <i class="fas fa-terminal"></i>
-                    <span class="font-bold">${title}</span>
-                </div>
-                <div class="flex items-center gap-2 text-sm">
-                    <button class="btn btn-secondary" onclick="clearLogs('${logId}')"><i class="fas fa-eraser"></i>清空</button>
-                    <button class="btn btn-secondary" onclick="closeLogWindow('${logId}')"><i class="fas fa-times"></i>关闭</button>
-                </div>
-            </div>
-            <div id="log-content-${logId}" class="log-content"><div class="text-gray-400">加载中...</div></div>
-        </div>
-    `;
-    modal.addEventListener('click', (e) => { if (e.target === modal) closeLogWindow(logId); });
-    root.appendChild(modal);
-    logWindows.set(logId, modal);
-    
-    // 初始化为自动滚动
-    logAutoScroll[logId] = true;
-    
-    // 添加滚动监听：检测用户是否向上滚动
-    const container = modal.querySelector(`#log-content-${logId}`);
-    if (container) {
-        container.addEventListener('scroll', () => {
-            const isAtBottom = container.scrollHeight - (container.scrollTop + container.clientHeight) < 50;
-            logAutoScroll[logId] = isAtBottom;
-        });
-    }
-    
-    loadLogsFor(logId);
-}
-
-function closeLogWindow(logId) {
-    const modal = logWindows.get(logId);
-    if (modal) {
-        modal.remove();
-        logWindows.delete(logId);
-        delete logAutoScroll[logId]; // 清理滚动状态
-    }
-}
+// 日志窗口相关逻辑已拆分到 app-logs.js
 
 async function loadSystemStatus() {
     try {
@@ -428,48 +379,34 @@ function renderQueueModal(queue = []) {
     `).join('');
 }
 
-async function loadLogsFor(logId) {
-    try {
-        const response = await fetch(`/api/logs?task_id=${logId}`);
-        const data = await response.json();
-        const logs = data.logs || [];
-        logCache[logId] = logs;
-        const container = document.getElementById(`log-content-${logId}`);
-        if (!container) return;
-        if (logs.length === 0) {
-            container.innerHTML = '<div class="text-gray-400">暂无日志</div>';
-        } else {
-            container.innerHTML = logs.map(log => `<div class="mb-1">${log}</div>`).join('');
-            // 智能滚动：只有当 logAutoScroll[logId] 为 true 时才自动滚动到底部
-            if (logAutoScroll[logId] !== false) {
-                container.scrollTop = container.scrollHeight;
-            }
-        }
-    } catch (error) {
-        console.error('加载日志失败:', error);
-    }
-}
-
-async function clearLogs(logId) {
-    try {
-        await fetch(`/api/logs/clear?task_id=${logId}`, { method: 'POST' });
-        logCache[logId] = [];
-        const container = document.getElementById(`log-content-${logId}`);
-        if (container) container.innerHTML = '<div class="text-gray-400">已清空</div>';
-        showNotification('日志已清空', 'success');
-    } catch (error) {
-        console.error('清空日志失败:', error);
-        showNotification('清空失败', 'error');
-    }
-}
+// 加载日志逻辑已拆分到 app-logs.js
 
 function showNotification(message, type = 'info') {
     const colors = { success: 'bg-green-500', error: 'bg-red-500', warning: 'bg-yellow-500', info: 'bg-blue-500' };
     const notification = document.createElement('div');
-    notification.className = `fixed top-4 right-4 ${colors[type]} text-white px-6 py-3 rounded-lg shadow-lg z-50`;
-    notification.textContent = message;
+    notification.className = `fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 ${colors[type]} text-white px-8 py-4 rounded-xl shadow-2xl z-[9999] transition-all duration-300 opacity-0 transform scale-90`;
+    notification.style.minWidth = '200px';
+    notification.style.textAlign = 'center';
+    notification.innerHTML = `
+        <div class="flex flex-col items-center gap-2">
+            <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-times-circle' : 'fa-info-circle'} text-2xl"></i>
+            <div class="font-bold">${message}</div>
+        </div>
+    `;
     document.body.appendChild(notification);
-    setTimeout(() => { notification.style.opacity = '0'; setTimeout(() => notification.remove(), 300); }, 3000);
+    
+    // 动画进入
+    setTimeout(() => {
+        notification.classList.remove('opacity-0', 'scale-90');
+        notification.classList.add('opacity-100', 'scale-100');
+    }, 10);
+
+    // 自动消失
+    setTimeout(() => { 
+        notification.classList.remove('opacity-100', 'scale-100');
+        notification.classList.add('opacity-0', 'scale-90');
+        setTimeout(() => notification.remove(), 300); 
+    }, 3000);
 }
 
 function switchTaskTab(tab) {
@@ -932,30 +869,7 @@ function initFormChangeListener() {
             el.addEventListener('change', () => { taskFormDirty = true; });
         }
     });
-    const deleteParentSimilarityInput = document.getElementById('deleteParentSimilarity');
-    const deleteParentSimilarityValue = document.getElementById('deleteParentSimilarityValue');
-    const deleteParentCheckbox = document.getElementById('deleteParentDir');
-    if (deleteParentSimilarityInput && deleteParentSimilarityValue) {
-        deleteParentSimilarityInput.addEventListener('input', () => {
-            deleteParentSimilarityValue.textContent = `${deleteParentSimilarityInput.value}%`;
-        });
-    }
-    if (deleteParentCheckbox && deleteParentSimilarityInput) {
-        const syncDeleteParentControls = () => {
-            deleteParentSimilarityInput.disabled = !deleteParentCheckbox.checked;
-            if (!deleteParentCheckbox.checked) {
-                deleteParentSimilarityInput.value = 60;
-                if (deleteParentSimilarityValue) {
-                    deleteParentSimilarityValue.textContent = '60%';
-                }
-            } else if (deleteParentSimilarityValue) {
-                deleteParentSimilarityValue.textContent = `${deleteParentSimilarityInput.value}%`;
-            }
-        };
-        deleteParentCheckbox.addEventListener('change', syncDeleteParentControls);
-        syncDeleteParentControls();
-    }
-    // 后缀输入框预设选择面板
+
     const suffixListInput = document.getElementById('suffixList');
     const suffixModeSelect = document.getElementById('suffixMode');
     const suffixPresetPanel = document.getElementById('suffixPresetPanel');
@@ -1008,166 +922,7 @@ function initFormChangeListener() {
     });
 }
 
-// 目录自动提示功能
-let currentDropdown = null;
-let currentInputField = null;
-
-function initDirectoryAutocomplete() {
-    const sourceInput = document.getElementById('taskSource');
-    const targetInput = document.getElementById('taskTarget');
-    
-    if (sourceInput) setupDirectoryInput(sourceInput);
-    if (targetInput) setupDirectoryInput(targetInput);
-}
-
-function setupDirectoryInput(input) {
-    input.addEventListener('focus', () => {
-        currentInputField = input;
-        showDirectoryDropdown(input);
-    });
-    
-    input.addEventListener('input', debounce(() => {
-        showDirectoryDropdown(input);
-    }, 300));
-    
-    input.addEventListener('blur', () => {
-        // 延迟移除，以便点击下拉框
-        setTimeout(() => {
-            if (currentInputField === input) {
-                removeDirectoryDropdown();
-                currentInputField = null;
-            }
-        }, 200);
-    });
-}
-
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-async function showDirectoryDropdown(input) {
-    const path = input.value.trim() || '/';
-    
-    try {
-        const response = await fetch(`/api/directories?path=${encodeURIComponent(path)}`);
-        const data = await response.json();
-        
-        if (!data.success && data.error) {
-            // 如果有错误，不显示下拉框
-            removeDirectoryDropdown();
-            return;
-        }
-        
-        const directories = data.directories || [];
-        if (directories.length === 0 && !data.parent_path) {
-            removeDirectoryDropdown();
-            return;
-        }
-        
-        renderDirectoryDropdown(input, directories, data.current_path, data.parent_path);
-    } catch (error) {
-        console.error('获取目录失败:', error);
-        removeDirectoryDropdown();
-    }
-}
-
-function renderDirectoryDropdown(input, directories, currentPath, parentPath) {
-    removeDirectoryDropdown();
-    
-    const dropdown = document.createElement('div');
-    dropdown.className = 'directory-dropdown';
-    dropdown.style.cssText = `
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        max-height: 300px;
-        overflow-y: auto;
-        background: white;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
-        z-index: 1000;
-        margin-top: 4px;
-    `;
-    
-    // 添加当前路径显示
-    if (currentPath) {
-        const pathInfo = document.createElement('div');
-        pathInfo.className = 'px-3 py-2 text-xs text-gray-500 border-b border-gray-200 font-mono';
-        pathInfo.textContent = `当前: ${currentPath}`;
-        dropdown.appendChild(pathInfo);
-    }
-    
-    // 添加返回上一级
-    if (parentPath && parentPath !== currentPath) {
-        const parentItem = createDirectoryItem('📁 ..',  parentPath, input);
-        parentItem.style.fontWeight = 'bold';
-        dropdown.appendChild(parentItem);
-    }
-    
-    // 添加子目录
-    directories.forEach(dir => {
-        const item = createDirectoryItem('📂 ' + dir.name, dir.path, input);
-        dropdown.appendChild(item);
-    });
-    
-    if (directories.length === 0 && (!parentPath || parentPath === currentPath)) {
-        const emptyItem = document.createElement('div');
-        emptyItem.className = 'px-3 py-2 text-sm text-gray-400 text-center';
-        emptyItem.textContent = '此目录下无子目录';
-        dropdown.appendChild(emptyItem);
-    }
-    
-    // 将下拉框附加到 input 的父元素
-    const parent = input.parentElement;
-    parent.style.position = 'relative';
-    parent.appendChild(dropdown);
-    
-    currentDropdown = dropdown;
-}
-
-function createDirectoryItem(text, path, input) {
-    const item = document.createElement('div');
-    item.className = 'px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 transition-colors';
-    item.textContent = text;
-    item.style.cursor = 'pointer';
-    
-    item.addEventListener('mousedown', (e) => {
-        e.preventDefault(); // 防止 input blur
-    });
-    
-    item.addEventListener('click', () => {
-        input.value = path;
-        taskFormDirty = true;
-        removeDirectoryDropdown();
-        input.focus();
-        // 重新加载目录
-        setTimeout(() => showDirectoryDropdown(input), 100);
-    });
-    
-    return item;
-}
-
-function removeDirectoryDropdown() {
-    if (currentDropdown) {
-        currentDropdown.remove();
-        currentDropdown = null;
-    }
-}
-
-function removeDirectoryAutocomplete() {
-    removeDirectoryDropdown();
-    currentInputField = null;
-}
+// 目录自动提示功能已拆分到 app-directory.js
 
 async function deleteTask(taskId, taskName) {
     if (!confirm(`确定要删除任务"${taskName}"吗？`)) return;
@@ -1492,3 +1247,324 @@ async function triggerFullOverwrite(taskId) {
         });
     });
 })();
+
+// ========== OpenList 配置管理 ==========
+
+/**
+ * 加载 OpenList 配置
+ */
+async function loadOpenListConfig() {
+    try {
+        const response = await fetch('/api/settings/openlist');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.config) {
+                document.getElementById('openlist-url').value = data.config.url || '';
+                document.getElementById('openlist-username').value = data.config.username || '';
+                document.getElementById('openlist-password').value = ''; // 不回显密码
+                document.getElementById('openlist-token').value = data.config.token || '';
+                document.getElementById('openlist-public-url').value = data.config.public_url || '';
+            }
+        }
+    } catch (error) {
+        console.error('加载 OpenList 配置失败:', error);
+    }
+}
+
+/**
+ * 保存所有设置
+ */
+async function saveAllSettings() {
+    // 禁用保存按钮防止重复点击
+    const btn = document.querySelector('#view-system-settings .btn-primary');
+    if (btn) {
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>正在保存...';
+        
+        try {
+            // 获取所有配置
+            const openlistConfig = {
+                url: document.getElementById('openlist-url').value.trim(),
+                username: document.getElementById('openlist-username').value.trim(),
+                password: document.getElementById('openlist-password').value.trim(),
+                token: document.getElementById('openlist-token').value.trim(),
+                public_url: document.getElementById('openlist-public-url').value.trim()
+            };
+            
+            const extensions = {
+                subtitle: document.getElementById('subtitle-extensions').value.trim(),
+                image: document.getElementById('image-extensions').value.trim(),
+                nfo: document.getElementById('nfo-extensions').value.trim(),
+                other: document.getElementById('other-extensions').value.trim()
+            };
+            
+            const systemConfig = {
+                sync_retry_count: parseInt(document.getElementById('system-retry-count').value)
+            };
+            
+            // 验证
+            if (!openlistConfig.url) {
+                showNotification('请填写 OpenList 服务器地址', 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+                return;
+            }
+            
+            // 并行发送请求
+            const results = await Promise.all([
+                fetch('/api/settings/openlist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(openlistConfig)
+                }),
+                fetch('/api/settings/extensions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(extensions)
+                }),
+                fetch('/api/settings/system', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(systemConfig)
+                })
+            ]);
+            
+            const data = await Promise.all(results.map(r => r.json()));
+            
+            if (data.every(d => d.success)) {
+                showNotification('所有设置已保存', 'success');
+                // 清空密码框
+                document.getElementById('openlist-password').value = '';
+            } else {
+                const errors = data.filter(d => !d.success).map(d => d.error).join('; ');
+                showNotification('部分设置保存失败: ' + errors, 'error');
+            }
+        } catch (error) {
+            console.error('保存设置失败:', error);
+            showNotification('保存失败: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+}
+
+/**
+ * 保存 OpenList 配置
+ */
+async function saveOpenListConfig() {
+    const url = document.getElementById('openlist-url').value.trim();
+    const username = document.getElementById('openlist-username').value.trim();
+    const password = document.getElementById('openlist-password').value.trim();
+    const token = document.getElementById('openlist-token').value.trim();
+    const publicUrl = document.getElementById('openlist-public-url').value.trim();
+    
+    if (!url) {
+        showNotification('请填写服务器地址', 'error');
+        return;
+    }
+    
+    // 验证 URL 格式
+    try {
+        new URL(url);
+    } catch (e) {
+        showNotification('服务器地址格式不正确', 'error');
+        return;
+    }
+    
+    const config = {
+        url: url,
+        username: username,
+        password: password,
+        token: token,
+        public_url: publicUrl
+    };
+    
+    try {
+        const response = await fetch('/api/settings/openlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            showNotification('OpenList 配置已保存', 'success');
+            // 清空密码输入框（已保存到后端）
+            document.getElementById('openlist-password').value = '';
+        } else {
+            showNotification(result.error || '保存失败', 'error');
+        }
+    } catch (error) {
+        console.error('保存 OpenList 配置失败:', error);
+        showNotification('保存失败: ' + error.message, 'error');
+    }
+}
+
+/**
+ * 测试 OpenList 连接
+ */
+async function testOpenListConnection() {
+    const statusEl = document.getElementById('openlist-connection-status');
+    const url = document.getElementById('openlist-url').value.trim();
+    const username = document.getElementById('openlist-username').value.trim();
+    const password = document.getElementById('openlist-password').value.trim();
+    const token = document.getElementById('openlist-token').value.trim();
+    
+    if (!url) {
+        showNotification('请填写服务器地址', 'error');
+        return;
+    }
+    
+    // 验证 URL 格式
+    try {
+        new URL(url);
+    } catch (e) {
+        showNotification('服务器地址格式不正确', 'error');
+        return;
+    }
+    
+    statusEl.innerHTML = '<i class="fas fa-spinner fa-spin text-blue-500"></i> <span class="text-gray-600">连接测试中...</span>';
+    
+    try {
+        const response = await fetch('/api/settings/openlist/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: url,
+                username: username,
+                password: password,
+                token: token
+            })
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            statusEl.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> <span class="text-green-600">连接成功！</span>';
+            showNotification('OpenList 连接测试成功', 'success');
+        } else {
+            statusEl.innerHTML = '<i class="fas fa-times-circle text-red-500"></i> <span class="text-red-600">连接失败: ' + (result.error || '未知错误') + '</span>';
+            showNotification('连接失败: ' + (result.error || '未知错误'), 'error');
+        }
+    } catch (error) {
+        console.error('测试 OpenList 连接失败:', error);
+        statusEl.innerHTML = '<i class="fas fa-times-circle text-red-500"></i> <span class="text-red-600">连接失败: ' + error.message + '</span>';
+        showNotification('连接测试失败: ' + error.message, 'error');
+    }
+}
+
+// ========== 文件扩展名设置 ==========
+
+/**
+ * 加载文件扩展名设置
+ */
+async function loadFileExtensions() {
+    try {
+        const response = await fetch('/api/settings/extensions');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.extensions) {
+                document.getElementById('subtitle-extensions').value = data.extensions.subtitle || '.srt,.ass,.ssa,.sub,.vtt';
+                document.getElementById('image-extensions').value = data.extensions.image || '.jpg,.jpeg,.png,.bmp,.gif,.webp';
+                document.getElementById('nfo-extensions').value = data.extensions.nfo || '.nfo';
+                document.getElementById('other-extensions').value = data.extensions.other || '';
+            }
+        }
+    } catch (error) {
+        console.error('加载文件扩展名设置失败:', error);
+    }
+}
+
+/**
+ * 加载系统通用设置
+ */
+async function loadSystemConfig() {
+    try {
+        const response = await fetch('/api/settings/system');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.config) {
+                const retryInput = document.getElementById('system-retry-count');
+                if (retryInput) {
+                    retryInput.value = data.config.sync_retry_count || 3;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('加载系统配置失败:', error);
+    }
+}
+
+/**
+ * 保存系统通用设置
+ */
+async function saveSystemConfig() {
+    const retryCount = parseInt(document.getElementById('system-retry-count').value);
+    
+    if (isNaN(retryCount) || retryCount < 0) {
+        showNotification('重试次数必须是非负整数', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/settings/system', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sync_retry_count: retryCount })
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            showNotification('系统配置已保存', 'success');
+        } else {
+            showNotification(result.error || '保存失败', 'error');
+        }
+    } catch (error) {
+        console.error('保存系统配置失败:', error);
+        showNotification('保存失败: ' + error.message, 'error');
+    }
+}
+
+/**
+ * 保存文件扩展名设置
+ */
+async function saveFileExtensions() {
+    const extensions = {
+        subtitle: document.getElementById('subtitle-extensions').value.trim(),
+        image: document.getElementById('image-extensions').value.trim(),
+        nfo: document.getElementById('nfo-extensions').value.trim(),
+        other: document.getElementById('other-extensions').value.trim()
+    };
+    
+    // 验证格式
+    for (const [key, value] of Object.entries(extensions)) {
+        if (value && key !== 'other') {  // other 可以为空
+            const exts = value.split(',').map(e => e.trim()).filter(e => e);
+            for (const ext of exts) {
+                if (!ext.startsWith('.')) {
+                    showNotification(`扩展名格式错误: "${ext}" 必须以点开头`, 'error');
+                    return;
+                }
+            }
+        }
+    }
+    
+    try {
+        const response = await fetch('/api/settings/extensions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(extensions)
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            showNotification('文件扩展名设置已保存', 'success');
+        } else {
+            showNotification(result.error || '保存失败', 'error');
+        }
+    } catch (error) {
+        console.error('保存文件扩展名设置失败:', error);
+        showNotification('保存失败: ' + error.message, 'error');
+    }
+}

@@ -190,10 +190,11 @@ class FileSyncer:
         size_min_bytes: Optional[int] = None,
         size_max_bytes: Optional[int] = None,
         suffix_mode: str = "NONE",
-        suffix_list: Optional[list[str]] = None
+        suffix_list: Optional[list[str]] = None,
+        retry_count: int = 0
     ) -> str:
         """
-        同步单个文件（原子化写入，支持子规则）
+        同步单个文件（原子化写入，支持子规则，支持重试）
         
         Args:
             source_file: 源文件路径
@@ -203,123 +204,138 @@ class FileSyncer:
             rule_size_diff: 子规刑2 - 文件大小不一致时同步
             rule_mtime_newer: 子规刑3 - 源文件修改时间更新时同步
             log_callback: 日志回调函数
+            size_min_bytes: 最小文件大小
+            size_max_bytes: 最大文件大小
+            suffix_mode: 后缀模式
+            suffix_list: 后缀列表
+            retry_count: 失败重试次数
             
         Returns:
             同步状态: "Success", "Skipped (Ignored)", "Skipped (Active)", "Skipped (Unchanged)", "Failed"
         """
-        try:
-            # 1. 垃圾过滤
-            if self.should_ignore(source_file):
-                if log_callback:
-                    log_callback(f"已忽略: {source_file.name}")
-                return "Skipped (Ignored)"
-            
-            # 2. 后缀过滤
-            mode = (suffix_mode or "NONE").upper()
-            if mode != "NONE":
-                ext = source_file.suffix.lower().lstrip(".")
-                suffixes = [s.lower().lstrip(".") for s in suffix_list] if suffix_list else []
-                if mode == "INCLUDE":
-                    if not ext or ext not in suffixes:
-                        if log_callback:
-                            log_callback(f"已过滤: {source_file.name} (mode=INCLUDE, ext={ext or '-'})")
-                        return "Skipped (Filtered)"
-                elif mode == "EXCLUDE":
-                    if ext and ext in suffixes:
-                        if log_callback:
-                            log_callback(f"已过滤: {source_file.name} (mode=EXCLUDE, ext={ext})")
-                        return "Skipped (Filtered)"
-            
-            # 3. 大小过滤
-            if size_min_bytes is not None or size_max_bytes is not None:
-                try:
-                    size = source_file.stat().st_size
-                except Exception as e:
-                    size = None
-                    if log_callback:
-                        log_callback(f"无法获取文件大小，将跳过过滤规则: {source_file.name} - {str(e)}")
-                if size is not None:
-                    if size_min_bytes is not None and size < size_min_bytes:
-                        if log_callback:
-                            log_callback(
-                                f"已跳过: {source_file.name} "
-                                f"({self._format_size(size)} < 最小 {self._format_size(size_min_bytes)})"
-                            )
-                        return "Skipped (Filtered)"
-                    if size_max_bytes is not None and size > size_max_bytes:
-                        if log_callback:
-                            log_callback(
-                                f"已跳过: {source_file.name} "
-                                f"({self._format_size(size)} > 最大 {self._format_size(size_max_bytes)})"
-                            )
-                        return "Skipped (Filtered)"
-            
-            # 4. 智能判断是否需要同步（传入子规则参数）
-            should_sync, reason = self.should_sync_file(
-                source_file, target_file, overwrite_existing,
-                rule_not_exists, rule_size_diff, rule_mtime_newer
-            )
-            if not should_sync:
-                if log_callback:
-                    log_callback(f"已跳过: {source_file.name}")
-                return "Skipped (Unchanged)"
-            
-            # 5. 静默期检测
-            is_stable, file_size = self.check_file_stability(source_file, log_callback)
-            if not is_stable:
-                if log_callback:
-                    log_callback(f"已跳过: {source_file.name} (文件活动中)")
-                return "Skipped (Active)"
-            
-            # 4. 准备临时文件路径
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = target_file.parent / f".tmp_{target_file.name}"
-            
-            # 5. 复制文件
-            if log_callback:
-                log_callback(f"开始复制: {source_file.name} ({self._format_size(file_size)})")
-            
-            # 使用 shutil.copy2 保留元数据
-            shutil.copy2(source_file, temp_file)
-            
-            if log_callback:
-                log_callback(f"复制完成: {source_file.name}")
-            
-            # 6. 校验文件大小
-            temp_size = temp_file.stat().st_size
-            if temp_size != file_size:
-                if log_callback:
-                    log_callback(
-                        f"大小校验失败: {source_file.name} "
-                        f"(期望: {self._format_size(file_size)}, "
-                        f"实际: {self._format_size(temp_size)})"
-                    )
-                temp_file.unlink()
-                return "Failed"
-            
-            # 7. 原子化重命名
-            if target_file.exists():
-                target_file.unlink()
-            
-            os.rename(temp_file, target_file)
-            
-            if log_callback:
-                log_callback(f"✓ 同步成功: {source_file.name}")
-            
-            return "Success"
-            
-        except Exception as e:
-            if log_callback:
-                log_callback(f"✗ 同步失败: {source_file.name} - {str(e)}")
-            
-            # 清理临时文件
+        # 尝试次数为 retry_count + 1
+        max_attempts = retry_count + 1
+        last_error = None
+        
+        for attempt in range(max_attempts):
             try:
-                if 'temp_file' in locals() and temp_file.exists():
-                    temp_file.unlink()
-            except:
-                pass
-            
-            return "Failed"
+                if attempt > 0 and log_callback:
+                    log_callback(f"正在重试 ({attempt}/{retry_count}): {source_file.name}")
+                
+                # 1. 垃圾过滤
+                if self.should_ignore(source_file):
+                    if log_callback:
+                        log_callback(f"已忽略: {source_file.name}")
+                    return "Skipped (Ignored)"
+                
+                # 2. 后缀过滤
+                mode = (suffix_mode or "NONE").upper()
+                if mode != "NONE":
+                    ext = source_file.suffix.lower().lstrip(".")
+                    suffixes = [s.lower().lstrip(".") for s in suffix_list] if suffix_list else []
+                    if mode == "INCLUDE":
+                        if not ext or ext not in suffixes:
+                            if log_callback:
+                                log_callback(f"已过滤: {source_file.name} (mode=INCLUDE, ext={ext or '-'})")
+                            return "Skipped (Filtered)"
+                    elif mode == "EXCLUDE":
+                        if ext and ext in suffixes:
+                            if log_callback:
+                                log_callback(f"已过滤: {source_file.name} (mode=EXCLUDE, ext={ext})")
+                            return "Skipped (Filtered)"
+                
+                # 3. 大小过滤
+                if size_min_bytes is not None or size_max_bytes is not None:
+                    try:
+                        size = source_file.stat().st_size
+                    except Exception as e:
+                        size = None
+                        if log_callback:
+                            log_callback(f"无法获取文件大小，将跳过过滤规则: {source_file.name} - {str(e)}")
+                    if size is not None:
+                        if size_min_bytes is not None and size < size_min_bytes:
+                            if log_callback:
+                                log_callback(
+                                    f"已跳过: {source_file.name} "
+                                    f"({self._format_size(size)} < 最小 {self._format_size(size_min_bytes)})"
+                                )
+                            return "Skipped (Filtered)"
+                        if size_max_bytes is not None and size > size_max_bytes:
+                            if log_callback:
+                                log_callback(
+                                    f"已跳过: {source_file.name} "
+                                    f"({self._format_size(size)} > 最大 {self._format_size(size_max_bytes)})"
+                                )
+                            return "Skipped (Filtered)"
+                
+                # 4. 智能判断是否需要同步（传入子规则参数）
+                should_sync, reason = self.should_sync_file(
+                    source_file, target_file, overwrite_existing,
+                    rule_not_exists, rule_size_diff, rule_mtime_newer
+                )
+                if not should_sync:
+                    if log_callback:
+                        log_callback(f"已跳过: {source_file.name}")
+                    return "Skipped (Unchanged)"
+                
+                # 5. 静默期检测
+                is_stable, file_size = self.check_file_stability(source_file, log_callback)
+                if not is_stable:
+                    if log_callback:
+                        log_callback(f"已跳过: {source_file.name} (文件活动中)")
+                    return "Skipped (Active)"
+                
+                # 6. 准备临时文件路径
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                temp_file = target_file.parent / f".tmp_{target_file.name}"
+                
+                # 7. 复制文件
+                if log_callback:
+                    log_callback(f"开始复制: {source_file.name} ({self._format_size(file_size)})")
+                
+                # 使用 shutil.copy2 保留元数据
+                shutil.copy2(source_file, temp_file)
+                
+                if log_callback:
+                    log_callback(f"复制完成: {source_file.name}")
+                
+                # 8. 校验文件大小
+                temp_size = temp_file.stat().st_size
+                if temp_size != file_size:
+                    raise IOError(f"大小校验失败 (期望: {file_size}, 实际: {temp_size})")
+                
+                # 9. 原子化重命名
+                if target_file.exists():
+                    target_file.unlink()
+                
+                os.rename(temp_file, target_file)
+                
+                if log_callback:
+                    log_callback(f"✓ 同步成功: {source_file.name}")
+                
+                return "Success"
+                
+            except Exception as e:
+                last_error = str(e)
+                if log_callback:
+                    log_callback(f"✗ 同步出错 (第 {attempt + 1} 次尝试): {source_file.name} - {last_error}")
+                
+                # 清理临时文件
+                try:
+                    if 'temp_file' in locals() and temp_file.exists():
+                        temp_file.unlink()
+                except:
+                    pass
+                
+                # 如果还有重试机会，等待一会再试
+                if attempt < retry_count:
+                    time.sleep(2)  # 重试前等待2秒
+                else:
+                    break
+        
+        if log_callback:
+            log_callback(f"✗ 同步最终失败: {source_file.name} - 已重试 {retry_count} 次")
+        return "Failed"
     
     def sync_directory(
         self,
@@ -335,7 +351,8 @@ class FileSyncer:
         size_max_bytes: Optional[int] = None,
         suffix_mode: str = "NONE",
         suffix_list: Optional[list[str]] = None,
-        file_result_callback: Optional[Callable[[Path, Path, str], None]] = None
+        file_result_callback: Optional[Callable[[Path, Path, str], None]] = None,
+        retry_count: int = 0
     ) -> dict:
         """
         同步整个目录（支持多线程，固定递归模式，支持子规则）
@@ -354,6 +371,7 @@ class FileSyncer:
             suffix_mode: 后缀过滤模式：NONE/INCLUDE/EXCLUDE
             suffix_list: 后缀列表，小写且不带点，如 ["mp4", "mkv"]
             file_result_callback: 单文件处理结果回调，参数为 (source_file, target_file, result)
+            retry_count: 失败重试次数
             
         Returns:
             同步统计信息字典
@@ -372,6 +390,9 @@ class FileSyncer:
             log_callback(f"开始同步目录: {self.source_dir} -> {self.target_dir}")
             if thread_count > 1:
                 log_callback(f"多线程模式: {thread_count} 个线程")
+        
+        # 0. 清理残留临时文件
+        self._cleanup_temp_files(log_callback)
         
         # 收集所有需要同步的文件（固定递归模式）
         pattern = "**/*"
@@ -395,7 +416,8 @@ class FileSyncer:
                     size_min_bytes=size_min_bytes,
                     size_max_bytes=size_max_bytes,
                     suffix_mode=suffix_mode,
-                    suffix_list=suffix_list
+                    suffix_list=suffix_list,
+                    retry_count=retry_count
                 )
                 if file_result_callback:
                     file_result_callback(source_file, target_file, result)
@@ -421,7 +443,8 @@ class FileSyncer:
                         size_min_bytes,
                         size_max_bytes,
                         suffix_mode,
-                        suffix_list
+                        suffix_list,
+                        retry_count
                     ): (source_file, target_file)
                     for source_file, target_file in file_tasks
                 }
@@ -488,3 +511,27 @@ class FileSyncer:
                 return f"{size_bytes:.2f} {unit}"
             size_bytes /= 1024.0
         return f"{size_bytes:.2f} PB"
+
+    def _cleanup_temp_files(self, log_callback: Optional[Callable[[str], None]] = None):
+        """清理目标目录中的临时文件"""
+        if log_callback:
+            log_callback("正在检查并清理未完成的临时文件...")
+        
+        cleanup_count = 0
+        try:
+            for temp_file in self.target_dir.glob("**/.tmp_*"):
+                if temp_file.is_file():
+                    try:
+                        temp_file.unlink()
+                        cleanup_count += 1
+                    except Exception as e:
+                        if log_callback:
+                            log_callback(f"⚠ 清理临时文件失败: {temp_file} - {e}")
+        except Exception as e:
+            if log_callback:
+                log_callback(f"⚠ 扫描临时文件失败: {e}")
+        
+        if cleanup_count > 0 and log_callback:
+            log_callback(f"✓ 已自动清理 {cleanup_count} 个未完成的临时文件")
+        elif log_callback:
+            log_callback("未发现残留临时文件")
