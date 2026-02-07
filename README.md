@@ -6,7 +6,7 @@
 
 [![Docker Image](https://img.shields.io/badge/docker-xzixmn%2Fcloudgather-blue)](https://hub.docker.com/r/xzixmn/cloudgather)
 [![Version](https://img.shields.io/badge/version-0.5.3-green)](https://github.com/xzixmn/cloudgather)
-[![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-orange)](LICENSE)
 
 专为飞牛OS设计，将本地下载的影视资源自动备份到网盘，配合strm文件实现302播放
 
@@ -214,12 +214,16 @@ CloudGather/
 
 ## 📄 许可证
 
-MIT License
+本项目采用 GNU Affero General Public License v3.0 (AGPL-3.0) 开源协议。
+
+**重要说明**：由于本项目的 STRM 功能参考了 [AutoFilm](https://github.com/AkimioJR/AutoFilm) 项目的核心逻辑（该项目使用 AGPL-3.0 协议），根据 AGPL-3.0 协议的传染性要求，本项目也必须采用相同的协议。
+
+详见 [LICENSE](LICENSE) 文件。
 
 ## 🙏 致谢
 
 - 感谢发达的 AI 技术提供的开发协助。
-- 特别鸣谢 [AutoFilm](https://github.com/AkimioJR/AutoFilm) 项目，本项目 STRM 任务的核心逻辑参考自该项目。
+- 特别鸣谢 [@AkimioJR](https://github.com/AkimioJR) 的 [AutoFilm](https://github.com/AkimioJR/AutoFilm) 项目（AGPL-3.0 许可证），本项目 STRM 任务的核心逻辑与实现参考自该项目的标准。
 
 ---
 
