@@ -5,7 +5,6 @@ let tasksCache = [];
 let queueCache = [];
 let currentView = 'dashboard';
 let taskFormDirty = false; // 表单是否已修改
-let directoryCache = {}; // 目录缓存
 
 function applyTheme(theme) {
     document.body.setAttribute('data-theme', theme);
@@ -67,7 +66,14 @@ function switchView(view, navEl = null) {
 
 async function loadSystemStatus() {
     try {
-        const response = await fetch('/api/status');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒超时
+        
+        const response = await fetch('/api/status', {
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
         const data = await response.json();
         document.getElementById('stat-total').textContent = data.task_count;
         document.getElementById('stat-queued').textContent = data.queue_size;
@@ -145,7 +151,14 @@ function getStatusBadge(status) {
 
 async function loadTasks() {
     try {
-        const response = await fetch('/api/tasks');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒超时
+        
+        const response = await fetch('/api/tasks', {
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
         const data = await response.json();
         const tasks = data.tasks || [];
         tasksCache = tasks;
@@ -1147,6 +1160,20 @@ function showAdvancedTools(taskId) {
                         </div>
                     </div>
                 </div>
+                
+                <div class="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors">
+                    <div class="flex items-start gap-3">
+                        <i class="fas fa-database text-blue-500 text-2xl mt-1"></i>
+                        <div class="flex-1">
+                            <h4 class="font-bold text-lg mb-1">重构历史缓存</h4>
+                            <p class="text-sm text-gray-600 mb-3">扫描目标端已存在的文件并回填缓存树。适用于老用户升级或手动维护目标端后的状态同步，可避免重复同步。</p>
+                            <button onclick="triggerReconstruct('${taskId}')" class="btn btn-secondary text-sm" ${task.status !== 'IDLE' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''}>
+                                <i class="fas fa-hammer"></i>开始重构
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                     <div class="flex items-start gap-2">
                         <i class="fas fa-exclamation-triangle text-yellow-600 mt-0.5"></i>
@@ -1209,6 +1236,168 @@ async function triggerFullOverwrite(taskId) {
     }
 }
 
+async function triggerReconstruct(taskId) {
+    const task = tasksCache.find(t => t.id === taskId);
+    if (!task) {
+        showNotification('任务不存在', 'error');
+        return;
+    }
+    
+    // 二次确认
+    if (!confirm(`确认重构任务「${task.name}」的缓存吗？\n\n系统将扫描目标目录并尝试恢复同步状态。这对于避免重复同步非常有用。`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/tasks/${taskId}/reconstruct`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('缓存重构任务已启动', 'success');
+            closeAdvancedTools();
+            // 打开日志窗口
+            setTimeout(() => {
+                openLogWindow(taskId, task.name + ' 日志');
+            }, 500);
+        } else {
+            showNotification(result.error || '执行失败', 'error');
+        }
+    } catch (error) {
+        console.error('缓存重构失败:', error);
+        showNotification('执行失败', 'error');
+    }
+}
+
+// ========== 历史记录相关逻辑 ==========
+
+async function openHistoryModal() {
+    // 渲染任务过滤器
+    const filter = document.getElementById('history-task-filter');
+    if (filter) {
+        try {
+            // 并行获取两种任务
+            const [syncRes, strmRes] = await Promise.all([
+                fetch('/api/tasks'),
+                fetch('/api/strm/tasks')
+            ]);
+            const syncData = await syncRes.json();
+            const strmData = await strmRes.json();
+            
+            const syncTasks = syncData.tasks || [];
+            const strmTasks = strmData.tasks || [];
+            
+            filter.innerHTML = '<option value="">全部任务</option>';
+            
+            if (syncTasks.length > 0) {
+                const group = document.createElement('optgroup');
+                group.label = '同步任务';
+                syncTasks.forEach(task => {
+                    const option = document.createElement('option');
+                    option.value = task.id;
+                    option.textContent = task.name;
+                    group.appendChild(option);
+                });
+                filter.appendChild(group);
+            }
+            
+            if (strmTasks.length > 0) {
+                const group = document.createElement('optgroup');
+                group.label = 'STRM 任务';
+                strmTasks.forEach(task => {
+                    const option = document.createElement('option');
+                    option.value = task.id;
+                    option.textContent = task.name;
+                    group.appendChild(option);
+                });
+                filter.appendChild(group);
+            }
+        } catch (error) {
+            console.error('加载任务过滤器失败:', error);
+        }
+    }
+
+    loadHistory();
+    document.getElementById('historyModal').classList.add('show');
+}
+
+async function loadHistory() {
+    const taskId = document.getElementById('history-task-filter').value;
+    const container = document.getElementById('history-container');
+    const emptyEl = document.getElementById('history-empty');
+    
+    if (!container || !emptyEl) return;
+
+    container.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>正在加载...</td></tr>';
+    emptyEl.classList.add('hidden');
+
+    try {
+        const url = taskId ? `/api/history?task_id=${taskId}` : '/api/history';
+        const response = await fetch(url);
+        const data = await response.json();
+        const history = data.history || [];
+
+        if (history.length === 0) {
+            container.innerHTML = '';
+            emptyEl.classList.remove('hidden');
+            return;
+        }
+
+        container.innerHTML = history.map(item => {
+            const time = new Date(item.timestamp).toLocaleString();
+            let statusClass = 'bg-gray-100 text-gray-600';
+            let statusText = item.status;
+            
+            if (item.status === 'SYNCED') { statusClass = 'bg-green-100 text-green-700'; statusText = '同步成功'; }
+            else if (item.status === 'SKIPPED') { statusClass = 'bg-blue-100 text-blue-700'; statusText = '跳过'; }
+            else if (item.status === 'DELETED') { statusClass = 'bg-red-100 text-red-700'; statusText = '已删除'; }
+            else if (item.status === 'FAILED') { statusClass = 'bg-orange-100 text-orange-700'; statusText = '失败'; }
+            else if (item.status === 'PENDING') { statusClass = 'bg-gray-100 text-gray-500'; statusText = '等待中'; }
+            
+            const countBadge = item.count > 1 ? `<span class="ml-1 px-1.5 py-0.5 bg-gray-200 rounded-full text-[10px]" title="重复次数">${item.count}</span>` : '';
+            
+            return `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                    <td class="px-4 py-3 whitespace-nowrap text-gray-500 font-mono text-xs">${time}</td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 rounded-md font-bold text-xs ${statusClass}">${statusText}${countBadge}</span>
+                    </td>
+                    <td class="px-4 py-3 truncate max-w-xs" title="${item.path}">${item.path}</td>
+                    <td class="px-4 py-3 text-xs text-gray-400">${item.details || '-'}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('加载历史记录失败:', error);
+        container.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-red-500">加载失败</td></tr>';
+    }
+}
+
+async function clearHistory() {
+    const taskId = document.getElementById('history-task-filter').value;
+    const taskName = taskId ? document.querySelector(`#history-task-filter option[value="${taskId}"]`).textContent : '全部';
+    
+    if (!confirm(`确定要清空「${taskName}」的历史记录吗？`)) return;
+
+    try {
+        const url = taskId ? `/api/history/clear?task_id=${taskId}` : '/api/history/clear';
+        const response = await fetch(url, { method: 'POST' });
+        const result = await response.json();
+        if (result.success) {
+            showNotification('历史记录已清空', 'success');
+            loadHistory();
+        } else {
+            showNotification(result.error || '清空失败', 'error');
+        }
+    } catch (error) {
+        console.error('清空历史记录失败:', error);
+        showNotification('操作失败', 'error');
+    }
+}
+
 (function init() {
     const savedTheme = localStorage.getItem('cg-theme') || 'light';
     applyTheme(savedTheme);
@@ -1219,6 +1408,8 @@ async function triggerFullOverwrite(taskId) {
         
         // 初始化表单监听
         initFormChangeListener();
+        // 初始化密码输入监听
+        initPasswordInputListener();
         
         setInterval(() => {
             loadSystemStatus();
@@ -1241,7 +1432,7 @@ async function triggerFullOverwrite(taskId) {
         }
         
         // 其他模态框保持原有逻辑
-        ['runningModal', 'queueModal'].forEach(id => {
+        ['runningModal', 'queueModal', 'historyModal'].forEach(id => {
             const modal = document.getElementById(id);
             if (modal) modal.addEventListener('click', (e) => { if (e.target.id === id) modal.classList.remove('show'); });
         });
@@ -1262,6 +1453,8 @@ async function loadOpenListConfig() {
                 document.getElementById('openlist-url').value = data.config.url || '';
                 document.getElementById('openlist-username').value = data.config.username || '';
                 document.getElementById('openlist-password').value = ''; // 不回显密码
+                // 添加密码状态提示
+                updatePasswordStatusHint();
                 document.getElementById('openlist-token').value = data.config.token || '';
                 document.getElementById('openlist-public-url').value = data.config.public_url || '';
             }
@@ -1334,8 +1527,9 @@ async function saveAllSettings() {
             
             if (data.every(d => d.success)) {
                 showNotification('所有设置已保存', 'success');
-                // 清空密码框
+                // 清空密码框并更新状态提示
                 document.getElementById('openlist-password').value = '';
+                updatePasswordStatusHint();
             } else {
                 const errors = data.filter(d => !d.success).map(d => d.error).join('; ');
                 showNotification('部分设置保存失败: ' + errors, 'error');
@@ -1391,8 +1585,9 @@ async function saveOpenListConfig() {
         const result = await response.json();
         if (result.success) {
             showNotification('OpenList 配置已保存', 'success');
-            // 清空密码输入框（已保存到后端）
+            // 清空密码输入框并更新状态提示（已保存到后端）
             document.getElementById('openlist-password').value = '';
+            updatePasswordStatusHint();
         } else {
             showNotification(result.error || '保存失败', 'error');
         }
@@ -1403,8 +1598,41 @@ async function saveOpenListConfig() {
 }
 
 /**
- * 测试 OpenList 连接
+ * 更新密码状态提示
  */
+function updatePasswordStatusHint() {
+    const passwordInput = document.getElementById('openlist-password');
+    const hintElement = document.getElementById('password-status-hint');
+    
+    if (!hintElement) {
+        // 创建提示元素
+        const hint = document.createElement('div');
+        hint.id = 'password-status-hint';
+        hint.className = 'text-xs text-gray-500 mt-1 flex items-center';
+        hint.innerHTML = '<i class="fas fa-info-circle mr-1"></i>密码已保存，如需修改请重新输入';
+        passwordInput.parentNode.appendChild(hint);
+    } else {
+        // 更新提示文本
+        hintElement.innerHTML = '<i class="fas fa-info-circle mr-1"></i>密码已保存，如需修改请重新输入';
+    }
+}
+
+/**
+ * 监听密码输入框变化
+ */
+function initPasswordInputListener() {
+    const passwordInput = document.getElementById('openlist-password');
+    if (passwordInput) {
+        passwordInput.addEventListener('input', function() {
+            // 当用户开始输入时，移除状态提示
+            const hintElement = document.getElementById('password-status-hint');
+            if (hintElement) {
+                hintElement.remove();
+            }
+        });
+    }
+}
+
 async function testOpenListConnection() {
     const statusEl = document.getElementById('openlist-connection-status');
     const url = document.getElementById('openlist-url').value.trim();
@@ -1425,7 +1653,7 @@ async function testOpenListConnection() {
         return;
     }
     
-    statusEl.innerHTML = '<i class="fas fa-spinner fa-spin text-blue-500"></i> <span class="text-gray-600">连接测试中...</span>';
+    statusEl.innerHTML = '<i class="fas fa-spinner fa-spin text-blue-500"></i> <span class="text-gray-600">连接测试中...（使用' + (token ? 'Token' : '用户名密码') + '）</span>';
     
     try {
         const response = await fetch('/api/settings/openlist/test', {
@@ -1441,8 +1669,8 @@ async function testOpenListConnection() {
         
         const result = await response.json();
         if (result.success) {
-            statusEl.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> <span class="text-green-600">连接成功！</span>';
-            showNotification('OpenList 连接测试成功', 'success');
+            statusEl.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> <span class="text-green-600">' + result.message + '</span>';
+            showNotification('OpenList 连接测试成功: ' + result.message, 'success');
         } else {
             statusEl.innerHTML = '<i class="fas fa-times-circle text-red-500"></i> <span class="text-red-600">连接失败: ' + (result.error || '未知错误') + '</span>';
             showNotification('连接失败: ' + (result.error || '未知错误'), 'error');

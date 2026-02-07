@@ -2,10 +2,12 @@
 STRM 任务管理 API 蓝图
 """
 import logging
+import threading
 from typing import Dict
 from flask import Blueprint, jsonify, request
 
 from core.models import StrmTask
+from core.strm_generator import StrmGenerator
 
 strm_bp = Blueprint('strm', __name__)
 
@@ -362,3 +364,56 @@ def api_toggle_strm_task(task_id: str):
         strm_bp.log_handler(f"✓ STRM 任务已{status_text}: {task.name}")
     
     return jsonify({'success': True, 'enabled': task.enabled})
+
+
+@strm_bp.route('/strm/tasks/<task_id>/full-overwrite', methods=['POST'])
+def api_strm_full_overwrite(task_id: str):
+    """触发全量覆盖生成"""
+    scheduler = strm_bp.scheduler
+    log_handler = strm_bp.log_handler
+    
+    if task_id not in scheduler.strm_tasks:
+        return jsonify({'success': False, 'error': '任务不存在'}), 404
+    
+    task = scheduler.strm_tasks[task_id]
+    if task.status.value != 'IDLE':
+        return jsonify({'success': False, 'error': '任务状态非空闲，无法执行'}), 400
+    
+    def run_full_overwrite():
+        try:
+            log_handler(f"🚀 开始对 STRM 任务「{task.name}」执行全量覆盖生成...")
+            generator = StrmGenerator(task, scheduler.db)
+            generator.task.overwrite = True # 临时覆盖
+            generator.run(log_callback=log_handler)
+            log_handler(f"✅ 任务「{task.name}」全量覆盖生成完成")
+        except Exception as e:
+            log_handler(f"❌ 任务「{task.name}」执行失败: {e}")
+            
+    threading.Thread(target=run_full_overwrite, daemon=True).start()
+    return jsonify({'success': True, 'message': '任务已启动'})
+
+
+@strm_bp.route('/strm/tasks/<task_id>/reconstruct', methods=['POST'])
+def api_strm_reconstruct(task_id: str):
+    """重构 STRM 任务缓存"""
+    scheduler = strm_bp.scheduler
+    log_handler = strm_bp.log_handler
+    
+    if task_id not in scheduler.strm_tasks:
+        return jsonify({'success': False, 'error': '任务不存在'}), 404
+    
+    task = scheduler.strm_tasks[task_id]
+    if task.status.value != 'IDLE':
+        return jsonify({'success': False, 'error': '任务状态非空闲，无法执行'}), 400
+    
+    def run_reconstruction():
+        try:
+            log_handler(f"🛠 开始对 STRM 任务「{task.name}」执行缓存重构...")
+            generator = StrmGenerator(task, scheduler.db)
+            generator.reconstruct_cache_from_target(log_callback=log_handler)
+            log_handler(f"✅ 任务「{task.name}」缓存重构完成")
+        except Exception as e:
+            log_handler(f"❌ 任务「{task.name}」缓存重构失败: {e}")
+            
+    threading.Thread(target=run_reconstruction, daemon=True).start()
+    return jsonify({'success': True, 'message': '缓存重构已在后台启动'})

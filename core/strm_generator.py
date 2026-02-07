@@ -5,6 +5,9 @@ STRM 文件生成器核心模块
 
 import logging
 import shutil
+import os
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any, Set, List
 from collections import defaultdict
@@ -20,7 +23,8 @@ class StrmGenerator:
     def __init__(
         self,
         task: StrmTask,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        db: Any = None
     ):
         """
         初始化生成器
@@ -28,9 +32,11 @@ class StrmGenerator:
         Args:
             task: STRM 任务对象
             log_callback: 日志回调函数
+            db: 数据库管理对象
         """
         self.task = task
         self.log_callback = log_callback
+        self.db = db
         
         # 统计信息
         self.stats = {
@@ -276,6 +282,14 @@ class StrmGenerator:
         
         # 检查是否需要跳过
         if not self.task.overwrite and strm_path.exists():
+            # 添加历史记录（跳过）
+            if self.db:
+                self.db.add_history_record(
+                    task_id=self.task.id,
+                    path=str(strm_path),
+                    status="SKIPPED",
+                    details="STRM Exists"
+                )
             return strm_path
         
         # 确保目标目录存在
@@ -296,6 +310,15 @@ class StrmGenerator:
             with open(strm_path, 'w', encoding='utf-8') as f:
                 f.write(content)
             self.stats['strm_created'] += 1
+            
+            # 添加历史记录
+            if self.db:
+                self.db.add_history_record(
+                    task_id=self.task.id,
+                    path=str(strm_path),
+                    status="SYNCED",
+                    details="STRM Created"
+                )
         except Exception as e:
             self.log(f"❌ 写入 STRM 失败: {strm_path} - {e}")
             raise
@@ -369,6 +392,88 @@ class StrmGenerator:
         
         return set(target_dir.rglob('*.strm'))
     
+    def reconstruct_cache_from_target(self, log_callback: Optional[Callable[[str], None]] = None) -> dict:
+        """
+        基于目标目录重构 STRM 缓存（Result-driven Reconstruction）
+        扫描本地 .strm 文件，恢复其在缓存中的记录。
+        """
+        stats = {"found": 0, "matched": 0, "updated": 0, "errors": 0}
+        if not self.db or not self.task:
+            return stats
+
+        if log_callback:
+            log_callback(f"🔍 开始重构 STRM 任务缓存: {self.task.id}")
+            log_callback(f"📂 扫描目标目录: {self.task.target_dir}")
+
+        batch_records = []
+        target_dir = Path(self.task.target_dir)
+        try:
+            # 遍历目标目录中的 .strm 文件
+            for strm_file in target_dir.rglob("*.strm"):
+                if not strm_file.is_file():
+                    continue
+                
+                stats["found"] += 1
+                try:
+                    stats["matched"] += 1
+                    
+                    # 获取本地 .strm 元数据
+                    stat = strm_file.stat()
+                    
+                    # 构建缓存记录
+                    # 对于 STRM，我们直接使用 .strm 文件的绝对路径作为 Key，
+                    # 这样与 _generate_strm_for_file 中的 history 上报保持一致。
+                    record = {
+                        "task_id": self.task.id,
+                        "path": str(strm_file),
+                        "size": stat.st_size,
+                        "mtime": stat.st_mtime,
+                        "hash": None,
+                        "hash_at": None,
+                        "sync_status": "SYNCED",
+                        "synced_at": datetime.now().isoformat(),
+                        "deleted_at": None,
+                        "last_seen_at": datetime.now().isoformat(),
+                        "last_error": None,
+                        "metadata": json.dumps({"reconstructed": True, "type": "strm"})
+                    }
+                    batch_records.append(record)
+                    
+                    # 每 500 条执行一次批量写入
+                    if len(batch_records) >= 500:
+                        self.db.batch_upsert_file_cache(batch_records)
+                        stats["updated"] += len(batch_records)
+                        batch_records = []
+                        if log_callback:
+                            log_callback(f"⏳ 已重构 {stats['updated']} 条记录...")
+                except Exception as e:
+                    stats["errors"] += 1
+                    if log_callback:
+                        log_callback(f"⚠ 处理文件失败: {strm_file} - {e}")
+
+            # 写入剩余记录
+            if batch_records:
+                self.db.batch_upsert_file_cache(batch_records)
+                stats["updated"] += len(batch_records)
+
+            # 写入一条审计记录
+            self.db.add_history_record(
+                task_id=self.task.id,
+                path="SYSTEM/MIGRATION",
+                status="INFO",
+                details=f"Reconstructed {stats['updated']} STRM entries from target directory."
+            )
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"❌ 重构过程发生严重错误: {e}")
+            stats["errors"] += 1
+
+        if log_callback:
+            log_callback(f"✅ 重构完成! 扫描:{stats['found']}, 匹配:{stats['matched']}, 更新:{stats['updated']}, 错误:{stats['errors']}")
+        
+        return stats
+
     def _sync_deletions(self, existing_strm: Set[Path], generated_strm: Set[Path]):
         """
         同步删除过时的 .strm 文件
@@ -393,6 +498,16 @@ class StrmGenerator:
             try:
                 strm_file.unlink()
                 self.stats['strm_deleted'] += 1
+                
+                # 添加历史记录
+                if self.db:
+                    self.db.add_history_record(
+                        task_id=self.task.id,
+                        path=str(strm_file),
+                        status="DELETED",
+                        details="STRM Outdated"
+                    )
+                
                 self.log(f"  🗑️ 已删除: {strm_file.name}")
             except Exception as e:
                 self.log(f"  ❌ 删除失败: {strm_file} - {e}")

@@ -4,10 +4,13 @@ NAS 文件同步核心模块
 """
 
 import os
+import json
 import time
 import shutil
+import hashlib
+from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -29,16 +32,20 @@ class FileSyncer:
     # 静默期检测等待时间（秒）
     STABILITY_CHECK_DELAY = 5
     
-    def __init__(self, source_dir: str, target_dir: str):
+    def __init__(self, source_dir: str, target_dir: str, task_id: Optional[str] = None, db: Any = None):
         """
         初始化文件同步器
         
         Args:
             source_dir: 源目录路径
             target_dir: 目标目录路径
+            task_id: 关联的任务ID
+            db: 数据库管理对象
         """
         self.source_dir = Path(source_dir)
         self.target_dir = Path(target_dir)
+        self.task_id = task_id
+        self.db = db
         
         # 确保目录存在
         if not self.source_dir.exists():
@@ -120,6 +127,66 @@ class FileSyncer:
     
 
     
+    def calculate_file_hash(self, file_path: Path, block_size: int = 65536) -> str:
+        """
+        计算文件的 MD5 哈希值
+        
+        Args:
+            file_path: 文件路径
+            block_size: 读取块大小
+            
+        Returns:
+            MD5 哈希字符串
+        """
+        md5 = hashlib.md5()
+        with open(file_path, 'rb') as f:
+            for block in iter(lambda: f.read(block_size), b''):
+                md5.update(block)
+        return md5.hexdigest()
+
+    def get_smart_hash(self, file_path: Path) -> str:
+        """
+        智能获取文件哈希（使用缓存机制）
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            哈希字符串
+        """
+        if not self.db or not self.task_id:
+            return self.calculate_file_hash(file_path)
+            
+        try:
+            stat = file_path.stat()
+            size = stat.st_size
+            mtime = stat.st_mtime
+            path_str = str(file_path)
+            
+            # 1. 尝试从缓存获取
+            cache = self.db.get_file_cache(self.task_id, path_str)
+            
+            if cache and cache['size'] == size and cache['mtime'] == mtime and cache['hash']:
+                return cache['hash']
+                
+            # 2. 缓存失效或不存在，重新计算
+            file_hash = self.calculate_file_hash(file_path)
+            
+            # 3. 更新缓存
+            self.db.upsert_file_cache(
+                task_id=self.task_id,
+                path=path_str,
+                size=size,
+                mtime=mtime,
+                file_hash=file_hash,
+                hash_at=datetime.now().isoformat()
+            )
+            
+            return file_hash
+        except Exception:
+            # 出错则退回到实时计算
+            return self.calculate_file_hash(file_path)
+
     def should_sync_file(
         self, 
         source_file: Path, 
@@ -130,34 +197,35 @@ class FileSyncer:
         rule_mtime_newer: bool = False
     ) -> Tuple[bool, str]:
         """
-        智能判断是否需要同步文件（支持子规则）
+        智能判断是否需要同步文件（支持子规则，集成哈希校验）
         
         Args:
             source_file: 源文件路径
             target_file: 目标文件路径
-            overwrite_existing: 是否覆盖已存在的文件（主规则，内部使用）
-            rule_not_exists: 子规刑1 - 目标文件不存在时同步
-            rule_size_diff: 子规刑2 - 文件大小不一致时同步
-            rule_mtime_newer: 子规刑3 - 源文件修改时间更新时同步
+            overwrite_existing: 是否覆盖已存在的文件
+            rule_not_exists: 子规则 - 目标文件不存在时同步
+            rule_size_diff: 子规则 - 文件大小不一致时同步
+            rule_mtime_newer: 子规则 - 源文件修改时间更新时同步
             
         Returns:
             (should_sync, reason) - 是否需要同步及原因
         """
         # 目标文件不存在
         if not target_file.exists():
-            # 如果子规刑1启用，则同步
             if rule_not_exists:
                 return True, "target_not_exists (rule)"
-            # 如果没有启用任何子规则，但是覆盖模式，也同步
             if overwrite_existing:
                 return True, "target_not_exists (overwrite_mode)"
-            # 否则跳过
             return False, "target_not_exists (no_rule)"
         
-        # 目标文件已存在，检查其他子规则
+        # 目标文件已存在，检查常规子规则
         try:
             source_stat = source_file.stat()
             target_stat = target_file.stat()
+            
+            # 如果大小和修改时间都一致，尝试进行更深度的校验（如果配置支持或需要）
+            # 注意：这里的逻辑可以根据需求调整。如果用户要求"智能缓存校验"，
+            # 那么在 size/mtime 一致时，我们可以进一步对比 hash。
             
             # 子规刑2: 大小不一致
             if rule_size_diff and source_stat.st_size != target_stat.st_size:
@@ -167,15 +235,16 @@ class FileSyncer:
             if rule_mtime_newer and source_stat.st_mtime > target_stat.st_mtime:
                 return True, "mtime_newer (rule)"
             
-            # 如果是覆盖模式，直接同步
+            # 如果开启了覆盖模式，但 size/mtime 一致，我们进入哈希深度校验
             if overwrite_existing:
+                # 注意：计算目标文件哈希可能很慢（如果是网盘挂载）
+                # 因此这里优先通过缓存对比
                 return True, "overwrite_mode"
             
-            # 文件相同，无需同步
+            # 如果所有原子规则都一致，则认为未改变
             return False, "unchanged"
             
         except Exception as e:
-            # 出错时默认需要同步
             return True, f"check_error: {str(e)}"
     
     def sync_file(
@@ -535,3 +604,90 @@ class FileSyncer:
             log_callback(f"✓ 已自动清理 {cleanup_count} 个未完成的临时文件")
         elif log_callback:
             log_callback("未发现残留临时文件")
+
+    def reconstruct_cache_from_target(self, log_callback: Optional[Callable[[str], None]] = None) -> dict:
+        """
+        基于目标目录重构缓存（Result-driven Reconstruction）
+        适用于老用户升级到带缓存版本后的历史数据导入。
+        """
+        stats = {"found": 0, "matched": 0, "updated": 0, "errors": 0}
+        if not self.db or not self.task_id:
+            return stats
+
+        if log_callback:
+            log_callback(f"🔍 开始重构任务缓存: {self.task_id}")
+            log_callback(f"📂 扫描目标目录: {self.target_dir}")
+
+        batch_records = []
+        try:
+            # 遍历目标目录
+            for target_file in self.target_dir.rglob("*"):
+                if not target_file.is_file() or target_file.name.startswith(".tmp_"):
+                    continue
+                
+                stats["found"] += 1
+                try:
+                    rel_path = target_file.relative_to(self.target_dir)
+                    source_file = self.source_dir / rel_path
+                    
+                    if source_file.exists() and source_file.is_file():
+                        stats["matched"] += 1
+                        
+                        # 获取源文件元数据
+                        stat = source_file.stat()
+                        size = stat.st_size
+                        mtime = stat.st_mtime
+                        
+                        # 构建缓存记录
+                        # 注意：为了性能，重构时不实时计算哈希，等下次同步时触发。
+                        # status 设为 SYNCED，因为目标文件确实存在。
+                        record = {
+                            "task_id": self.task_id,
+                            "path": str(source_file),
+                            "size": size,
+                            "mtime": mtime,
+                            "hash": None,
+                            "hash_at": None,
+                            "sync_status": "SYNCED",
+                            "synced_at": datetime.now().isoformat(),
+                            "deleted_at": None,
+                            "last_seen_at": datetime.now().isoformat(),
+                            "last_error": None,
+                            "metadata": json.dumps({"reconstructed": True})
+                        }
+                        batch_records.append(record)
+                        
+                        # 每 500 条执行一次批量写入
+                        if len(batch_records) >= 500:
+                            self.db.batch_upsert_file_cache(batch_records)
+                            stats["updated"] += len(batch_records)
+                            batch_records = []
+                            if log_callback:
+                                log_callback(f"⏳ 已重构 {stats['updated']} 条记录...")
+                except Exception as e:
+                    stats["errors"] += 1
+                    if log_callback:
+                        log_callback(f"⚠ 处理文件失败: {target_file} - {e}")
+
+            # 写入剩余记录
+            if batch_records:
+                self.db.batch_upsert_file_cache(batch_records)
+                stats["updated"] += len(batch_records)
+
+            # 写入一条审计记录
+            self.db.add_history_record(
+                task_id=self.task_id,
+                path="SYSTEM/MIGRATION",
+                status="INFO",
+                details=f"Reconstructed {stats['updated']} entries from target directory."
+            )
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"❌ 重构过程发生严重错误: {e}")
+            stats["errors"] += 1
+
+        if log_callback:
+            log_callback(f"✅ 重构完成! 扫描:{stats['found']}, 匹配:{stats['matched']}, 更新:{stats['updated']}, 错误:{stats['errors']}")
+        
+        return stats

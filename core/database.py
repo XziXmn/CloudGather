@@ -116,6 +116,58 @@ class Database:
                 )
             """)
             
+            # 创建文件缓存表（用于完整性校验和删除安全增强）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS file_cache (
+                    task_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    mtime REAL NOT NULL,
+                    hash TEXT,
+                    hash_at TEXT,
+                    sync_status TEXT DEFAULT 'PENDING',
+                    synced_at TEXT,
+                    deleted_at TEXT,
+                    last_seen_at TEXT,
+                    last_error TEXT,
+                    metadata TEXT,
+                    PRIMARY KEY (task_id, path)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_file_cache_task_path 
+                ON file_cache(task_id, path)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_file_cache_status 
+                ON file_cache(task_id, sync_status)
+            """)
+
+            # 创建历史记录表（支持智能去重）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sync_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    details TEXT,
+                    count INTEGER DEFAULT 1
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sync_history_task_path 
+                ON sync_history(task_id, path)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sync_history_timestamp 
+                ON sync_history(timestamp)
+            """)
+            
             conn.commit()
     
     # ==================== 删除队列操作 ====================
@@ -281,6 +333,215 @@ class Database:
                 cursor.execute("SELECT COUNT(*) FROM delete_queue")
             
             return cursor.fetchone()[0]
+    
+    # ==================== 文件缓存操作 ====================
+    
+    def upsert_file_cache(self, task_id: str, path: str, size: int, mtime: float, 
+                          file_hash: Optional[str] = None, hash_at: Optional[str] = None,
+                          sync_status: str = 'PENDING', synced_at: Optional[str] = None,
+                          deleted_at: Optional[str] = None, last_seen_at: Optional[str] = None,
+                          last_error: Optional[str] = None, metadata: Optional[str] = None):
+        """添加或更新文件缓存记录"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO file_cache (
+                    task_id, path, size, mtime, hash, hash_at, 
+                    sync_status, synced_at, deleted_at, last_seen_at, 
+                    last_error, metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id, path) DO UPDATE SET
+                    size = excluded.size,
+                    mtime = excluded.mtime,
+                    hash = COALESCE(excluded.hash, hash),
+                    hash_at = COALESCE(excluded.hash_at, hash_at),
+                    sync_status = excluded.sync_status,
+                    synced_at = COALESCE(excluded.synced_at, synced_at),
+                    deleted_at = COALESCE(excluded.deleted_at, deleted_at),
+                    last_seen_at = COALESCE(excluded.last_seen_at, last_seen_at),
+                    last_error = excluded.last_error,
+                    metadata = COALESCE(excluded.metadata, metadata)
+            """, (task_id, path, size, mtime, file_hash, hash_at, 
+                  sync_status, synced_at, deleted_at, last_seen_at, 
+                  last_error, metadata))
+            conn.commit()
+    
+    def get_file_cache(self, task_id: str, path: str) -> Optional[Dict[str, Any]]:
+        """获取单个文件缓存记录"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM file_cache WHERE task_id = ? AND path = ?
+            """, (task_id, path))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+            
+    def update_sync_status(self, task_id: str, path: str, status: str, 
+                           synced_at: Optional[str] = None, deleted_at: Optional[str] = None, 
+                           error: Optional[str] = None):
+        """更新同步或删除状态"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            updates = ["sync_status = ?", "last_error = ?"]
+            params = [status, error]
+            
+            if synced_at:
+                updates.append("synced_at = ?")
+                params.append(synced_at)
+            if deleted_at:
+                updates.append("deleted_at = ?")
+                params.append(deleted_at)
+                
+            params.extend([task_id, path])
+            query = f"UPDATE file_cache SET {', '.join(updates)} WHERE task_id = ? AND path = ?"
+            cursor.execute(query, params)
+            conn.commit()
+
+    def is_file_synced(self, task_id: str, path: str) -> bool:
+        """检查文件是否已同步或确认为跳过"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT sync_status FROM file_cache WHERE task_id = ? AND path = ?
+            """, (task_id, path))
+            row = cursor.fetchone()
+            if row:
+                return row['sync_status'] in ('SYNCED', 'SKIPPED')
+            return False
+
+    def get_cache_count(self) -> int:
+        """获取缓存记录总数"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM file_cache")
+            return cursor.fetchone()[0]
+
+    def get_task_cache_count(self, task_id: str) -> int:
+        """获取指定任务的缓存记录数"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM file_cache WHERE task_id = ?", (task_id,))
+            return cursor.fetchone()[0]
+
+    def clear_task_cache(self, task_id: str):
+        """清理指定任务的所有缓存"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM file_cache WHERE task_id = ?", (task_id,))
+            conn.commit()
+
+    def batch_upsert_file_cache(self, records: List[Dict[str, Any]]):
+        """批量添加或更新文件缓存记录"""
+        if not records:
+            return
+            
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany("""
+                INSERT INTO file_cache (
+                    task_id, path, size, mtime, hash, hash_at, 
+                    sync_status, synced_at, deleted_at, last_seen_at, 
+                    last_error, metadata
+                )
+                VALUES (
+                    :task_id, :path, :size, :mtime, :hash, :hash_at, 
+                    :sync_status, :synced_at, :deleted_at, :last_seen_at, 
+                    :last_error, :metadata
+                )
+                ON CONFLICT(task_id, path) DO UPDATE SET
+                    size = excluded.size,
+                    mtime = excluded.mtime,
+                    hash = COALESCE(excluded.hash, hash),
+                    hash_at = COALESCE(excluded.hash_at, hash_at),
+                    sync_status = excluded.sync_status,
+                    synced_at = COALESCE(excluded.synced_at, synced_at),
+                    deleted_at = COALESCE(excluded.deleted_at, deleted_at),
+                    last_seen_at = COALESCE(excluded.last_seen_at, last_seen_at),
+                    last_error = excluded.last_error,
+                    metadata = COALESCE(excluded.metadata, metadata)
+            """, records)
+            conn.commit()
+
+    # ==================== 历史记录操作 ====================
+
+    def add_history_record(self, task_id: str, path: str, status: str, details: Optional[str] = None):
+        """
+        添加历史记录，实现智能去重逻辑：
+        如果同一个文件最后一次记录的状态与当前一致，则更新时间戳和计数，不再新增条目。
+        """
+        now = datetime.now().isoformat()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 查找该文件最后一条记录
+            cursor.execute("""
+                SELECT id, status, count FROM sync_history 
+                WHERE task_id = ? AND path = ? 
+                ORDER BY timestamp DESC LIMIT 1
+            """, (task_id, path))
+            last_record = cursor.fetchone()
+            
+            if last_record and last_record['status'] == status:
+                # 状态相同，更新时间戳和计数
+                cursor.execute("""
+                    UPDATE sync_history SET 
+                        timestamp = ?, 
+                        details = ?,
+                        count = count + 1
+                    WHERE id = ?
+                """, (now, details, last_record['id']))
+            else:
+                # 状态不同或无记录，新增
+                cursor.execute("""
+                    INSERT INTO sync_history (task_id, path, status, timestamp, details)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (task_id, path, status, now, details))
+            
+            conn.commit()
+
+    def get_history(self, task_id: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """获取历史记录"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if task_id:
+                cursor.execute("""
+                    SELECT * FROM sync_history 
+                    WHERE task_id = ? 
+                    ORDER BY timestamp DESC 
+                    LIMIT ? OFFSET ?
+                """, (task_id, limit, offset))
+            else:
+                cursor.execute("""
+                    SELECT * FROM sync_history 
+                    ORDER BY timestamp DESC 
+                    LIMIT ? OFFSET ?
+                """, (limit, offset))
+            
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_file_history(self, task_id: str, path: str) -> List[Dict[str, Any]]:
+        """获取单个文件的审计历史"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM sync_history 
+                WHERE task_id = ? AND path = ? 
+                ORDER BY timestamp DESC
+            """, (task_id, path))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def clear_history(self, task_id: Optional[str] = None):
+        """清理历史记录"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if task_id:
+                cursor.execute("DELETE FROM sync_history WHERE task_id = ?", (task_id,))
+            else:
+                cursor.execute("DELETE FROM sync_history")
+            conn.commit()
     
     # ==================== 配置操作 ====================
     

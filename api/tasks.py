@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, request
 from apscheduler.triggers.cron import CronTrigger
 
 from core.models import SyncTask
+from core.worker import FileSyncer
 
 tasks_bp = Blueprint('tasks', __name__)
 
@@ -516,3 +517,68 @@ def api_cron_validate():
         })
     except Exception as e:
         return jsonify({'valid': False, 'error': f'验证失败: {str(e)}'})
+
+
+# ==================== 历史记录 API ====================
+
+@tasks_bp.route('/history', methods=['GET'])
+def api_history():
+    """获取历史记录"""
+    scheduler = tasks_bp.scheduler
+    task_id = request.args.get('task_id')
+    limit = int(request.args.get('limit', 100))
+    offset = int(request.args.get('offset', 0))
+    
+    try:
+        history = scheduler.db.get_history(task_id, limit, offset)
+        return jsonify({'success': True, 'history': history})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tasks_bp.route('/history/file', methods=['GET'])
+def api_file_history():
+    """获取单个文件的审计历史"""
+    scheduler = tasks_bp.scheduler
+    task_id = request.args.get('task_id')
+    path = request.args.get('path')
+    
+    if not task_id or not path:
+        return jsonify({'success': False, 'error': '缺少 task_id 或 path'}), 400
+    
+    try:
+        history = scheduler.db.get_file_history(task_id, path)
+        return jsonify({'success': True, 'history': history})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tasks_bp.route('/tasks/<task_id>/reconstruct', methods=['POST'])
+def api_reconstruct_task(task_id: str):
+    """重构任务缓存（Result-driven Reconstruction）"""
+    scheduler = tasks_bp.scheduler
+    log_handler = tasks_bp.log_handler
+    
+    task = scheduler.get_task(task_id)
+    if not task:
+        return jsonify({'success': False, 'error': '任务不存在'}), 404
+    
+    if task.status.value != 'IDLE':
+        return jsonify({'success': False, 'error': '任务状态非空闲，无法执行'}), 400
+    
+    def run_reconstruction():
+        try:
+            log_handler(f"🛠 开始对任务「{task.name}」执行缓存重构...")
+            syncer = FileSyncer(
+                source_dir=task.source_path,
+                target_dir=task.target_path,
+                task_id=task_id,
+                db=scheduler.db
+            )
+            stats = syncer.reconstruct_cache_from_target(log_callback=log_handler)
+            log_handler(f"✅ 任务「{task.name}」缓存重构完成")
+        except Exception as e:
+            log_handler(f"❌ 任务「{task.name}」缓存重构失败: {e}")
+            
+    threading.Thread(target=run_reconstruction, daemon=True).start()
+    return jsonify({'success': True, 'message': '缓存重构已在后台启动'})

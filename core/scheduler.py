@@ -73,6 +73,9 @@ class TaskScheduler:
         self._ensure_config_file()
         self._ensure_strm_config_file()
         
+        # 自动检测并执行缓存迁移
+        self._auto_migrate_cache_if_needed()
+        
         # 加载已保存的任务
         self.load_tasks()
         self.load_strm_tasks()
@@ -159,7 +162,43 @@ class TaskScheduler:
             self._log(f"⚠ 添加删除记录失败: {source_file} - {e}")
 
     def _on_file_synced(self, task: SyncTask, source_file: Path, result: str):
-        """单个文件同步完成回调，用于调度删除"""
+        """单个文件同步完成回调，用于调度删除和更新缓存"""
+        # 更新缓存状态
+        status_map = {
+            "Success": "SYNCED",
+            "Skipped (Unchanged)": "SKIPPED",
+            "Skipped (Filtered)": "SKIPPED",
+            "Skipped (Ignored)": "SKIPPED",
+            "Skipped (Active)": "PENDING",
+            "Failed": "FAILED"
+        }
+        
+        sync_status = status_map.get(result, "PENDING")
+        error_msg = None if sync_status != "FAILED" else result
+        
+        try:
+            stat = source_file.stat()
+            self.db.upsert_file_cache(
+                task_id=task.id,
+                path=str(source_file),
+                size=stat.st_size,
+                mtime=stat.st_mtime,
+                sync_status=sync_status,
+                synced_at=datetime.now().isoformat() if sync_status in ("SYNCED", "SKIPPED") else None,
+                last_error=error_msg
+            )
+            
+            # 添加历史记录（带去重）
+            self.db.add_history_record(
+                task_id=task.id,
+                path=str(source_file),
+                status=sync_status,
+                details=result if sync_status == "FAILED" else None
+            )
+        except Exception as e:
+            self._log(f"⚠ 更新文件缓存失败: {source_file} - {e}")
+
+        # 调度删除
         if result in ("Success", "Skipped (Unchanged)"):
             self._schedule_file_deletion(task, source_file)
 
@@ -197,12 +236,35 @@ class TaskScheduler:
 
             path = Path(source_path)
             try:
+                # 安全性增强：验证同步记录
+                if not self.db.is_file_synced(task_id, source_path):
+                    self._log(f"🛡 安全拦截：文件未确认同步，拒绝删除: {path}")
+                    # 不移除记录，标记为失败以便后续重试或人工检查
+                    delete_stats["files_failed"] += 1
+                    continue
+
                 if path.exists():
                     try:
                         path.unlink()
                         delete_stats["files_deleted"] += 1
                         deleted_files.append(path)
                         deleted_record_ids.append(record_id)
+                        
+                        # 更新缓存树中的删除时间
+                        self.db.update_sync_status(
+                            task_id=task_id,
+                            path=source_path,
+                            status="DELETED",
+                            deleted_at=datetime.now().isoformat()
+                        )
+                        
+                        # 添加历史记录（带去重）
+                        self.db.add_history_record(
+                            task_id=task_id,
+                            path=source_path,
+                            status="DELETED"
+                        )
+                        
                         self._log(f"🗑 已删除源文件: {path}")
                     except IsADirectoryError:
                         # 极端情况：记录的是目录
@@ -377,6 +439,58 @@ class TaskScheduler:
             "percent": round(percent, 1)
         }
     
+    def _auto_migrate_cache_if_needed(self):
+        """自动检测并执行缓存迁移（Result-driven Reconstruction）
+        在系统启动时检测缓存表是否为空，如果为空则自动执行迁移
+        """
+        try:
+            # 检查缓存表是否为空
+            cache_count = self.db.get_cache_count()
+            task_count = len(self.tasks) + len(self.strm_tasks)
+            
+            self._log(f"🔍 缓存自动迁移检查: 缓存记录={cache_count}, 任务总数={task_count}")
+            
+            # 如果缓存为空但存在任务，则自动执行迁移
+            if cache_count == 0 and task_count > 0:
+                self._log("🔄 检测到缓存为空，自动启动缓存迁移...")
+                
+                # 为每个同步任务执行重构
+                for task in self.tasks.values():
+                    try:
+                        self._log(f"🛠 自动重构同步任务缓存: {task.name}")
+                        syncer = FileSyncer(
+                            source_dir=task.source_path,
+                            target_dir=task.target_path,
+                            task_id=task.id,
+                            db=self.db
+                        )
+                        stats = syncer.reconstruct_cache_from_target(log_callback=self._log)
+                        self._log(f"✅ 同步任务 '{task.name}' 缓存重构完成: 扫描{stats['found']}, 匹配{stats['matched']}, 更新{stats['updated']}")
+                    except Exception as e:
+                        self._log(f"❌ 同步任务 '{task.name}' 缓存重构失败: {e}")
+                
+                # 为每个STRM任务执行重构
+                for task in self.strm_tasks.values():
+                    try:
+                        self._log(f"🛠 自动重构STRM任务缓存: {task.name}")
+                        from core.strm_generator import StrmGenerator
+                        generator = StrmGenerator(task, self._log, self.db)
+                        stats = generator.reconstruct_cache_from_target(log_callback=self._log)
+                        self._log(f"✅ STRM任务 '{task.name}' 缓存重构完成: 扫描{stats['found']}, 匹配{stats['matched']}, 更新{stats['updated']}")
+                    except Exception as e:
+                        self._log(f"❌ STRM任务 '{task.name}' 缓存重构失败: {e}")
+                
+                # 再次检查缓存数量
+                final_count = self.db.get_cache_count()
+                self._log(f"✅ 缓存自动迁移完成! 新增缓存记录: {final_count}")
+            elif cache_count > 0:
+                self._log(f"✅ 缓存已存在 ({cache_count} 条记录)，跳过自动迁移")
+            else:
+                self._log("ℹ️ 无任务配置，无需执行缓存迁移")
+                
+        except Exception as e:
+            self._log(f"⚠ 缓存自动迁移检查失败: {e}")
+
     def _ensure_config_file(self):
         """确保配置文件存在，若缺失则创建空文件"""
         try:
@@ -750,7 +864,9 @@ class TaskScheduler:
         try:
             syncer = FileSyncer(
                 source_dir=task.source_path,
-                target_dir=task.target_path
+                target_dir=task.target_path,
+                task_id=task_id,
+                db=self.db
             )
             
             # 获取系统重试设置
@@ -842,7 +958,8 @@ class TaskScheduler:
             
             generator = StrmGenerator(
                 task=task,
-                log_callback=self._log
+                log_callback=self._log,
+                db=self.db
             )
             
             stats = generator.run(

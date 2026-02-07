@@ -407,7 +407,10 @@
                     <div id="sync-tasks-panel" class="task-panel">
                         <div class="flex items-center justify-between mb-4">
                             <h3 class="text-lg font-semibold">同步任务列表</h3>
-                            <button onclick="showAddTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加同步任务</button>
+                            <div class="flex items-center gap-2">
+                                <button onclick="openHistoryModal()" class="btn btn-secondary text-sm"><i class="fas fa-history"></i>历史追踪</button>
+                                <button onclick="showAddTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加同步任务</button>
+                            </div>
                         </div>
                         <div id="tasks-container" class="space-y-2 card">
                             <div class="text-center py-12 text-gray-400"><i class="fas fa-inbox text-5xl mb-4"></i><p>暂无同步任务</p></div>
@@ -418,7 +421,10 @@
                     <div id="strm-tasks-panel" class="task-panel" style="display: none;">
                         <div class="flex items-center justify-between mb-4">
                             <h3 class="text-lg font-semibold">STRM 任务列表</h3>
-                            <button onclick="showAddStrmTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加 STRM 任务</button>
+                            <div class="flex items-center gap-2">
+                                <button onclick="openHistoryModal()" class="btn btn-secondary text-sm"><i class="fas fa-history"></i>历史追踪</button>
+                                <button onclick="showAddStrmTaskModal()" class="btn btn-primary text-sm"><i class="fas fa-plus"></i>添加 STRM 任务</button>
+                            </div>
                         </div>
                         <div id="strm-tasks-container" class="space-y-2 card">
                             <div class="text-center py-12 text-gray-400"><i class="fas fa-video text-5xl mb-4"></i><p>暂无 STRM 任务</p></div>
@@ -660,6 +666,47 @@
                 <button class="btn btn-secondary text-sm" onclick="closeOverlay('queueModal')"><i class="fas fa-times"></i>关闭</button>
             </div>
             <div id="queue-modal-container" class="space-y-3"><div class="text-gray-500 text-center py-6">队列为空</div></div>
+        </div>
+    </div>
+
+    <!-- 历史追踪模态框 -->
+    <div id="historyModal" class="overlay-modal">
+        <div class="modal-card card max-w-4xl w-full">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-xl font-bold">历史追踪</h3>
+                    <span class="pill" id="history-count">最近 100 条</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button class="btn btn-secondary text-sm" onclick="clearHistory()"><i class="fas fa-trash-alt"></i>清除记录</button>
+                    <button class="btn btn-secondary text-sm" onclick="closeOverlay('historyModal')"><i class="fas fa-times"></i>关闭</button>
+                </div>
+            </div>
+            <div class="mb-4 flex items-center gap-3">
+                <select id="history-task-filter" class="px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none" onchange="loadHistory()">
+                    <option value="">全部任务</option>
+                </select>
+                <div class="text-xs text-gray-500">智能去重：同一文件的连续相同状态已合并。</div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs text-gray-500 uppercase bg-gray-50 dark:bg-gray-800">
+                        <tr>
+                            <th class="px-4 py-3">时间</th>
+                            <th class="px-4 py-3">状态</th>
+                            <th class="px-4 py-3">路径</th>
+                            <th class="px-4 py-3">详情</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-container" class="divide-y divide-gray-100 dark:divide-gray-800">
+                        <!-- 历史记录条目 -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="history-empty" class="text-gray-500 text-center py-12 hidden">
+                <i class="fas fa-history text-4xl mb-3 opacity-20"></i>
+                <p>暂无历史记录</p>
+            </div>
         </div>
     </div>
 

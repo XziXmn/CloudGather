@@ -122,24 +122,25 @@ def test_openlist_connection():
         if not url:
             return jsonify({'success': False, 'error': '服务器地址不能为空'}), 400
         
-        # 如果提供了 token，直接测试
+        # 优先级：如果提供了 token，直接测试 token（即使也提供了用户名密码）
         if token:
             test_result = _test_with_token(url, token)
             if test_result['success']:
-                return jsonify({'success': True, 'message': '连接成功'})
+                return jsonify({'success': True, 'message': 'Token 验证成功'})
             else:
-                return jsonify({'success': False, 'error': test_result.get('error', '连接失败')})
+                return jsonify({'success': False, 'error': test_result.get('error', 'Token 验证失败')})
         
-        # 如果提供了用户名和密码，先登录获取 token
-        if username and password:
+        # 如果没有 token 但提供了用户名和密码，尝试登录获取 token
+        elif username and password:
             login_result = _login_openlist(url, username, password)
             if login_result['success']:
-                return jsonify({'success': True, 'message': '连接成功'})
+                return jsonify({'success': True, 'message': '用户名密码验证成功'})
             else:
                 return jsonify({'success': False, 'error': login_result.get('error', '登录失败')})
         
-        # 如果既没有 token 也没有用户名密码
-        return jsonify({'success': False, 'error': '请提供 Token 或用户名密码'})
+        # 如果什么都没提供
+        else:
+            return jsonify({'success': False, 'error': '请提供 Token 或用户名密码'})
         
     except Exception as e:
         logging.error(f"测试 OpenList 连接异常: {e}")

@@ -857,6 +857,20 @@ function showStrmAdvancedTools(taskId) {
                         </div>
                     </div>
                 </div>
+                
+                <div class="border border-gray-200 rounded-lg p-4 hover:border-purple-300 transition-colors">
+                    <div class="flex items-start gap-3">
+                        <i class="fas fa-database text-blue-500 text-2xl mt-1"></i>
+                        <div class="flex-1">
+                            <h4 class="font-bold text-lg mb-1">重构历史缓存</h4>
+                            <p class="text-sm text-gray-600 mb-3">扫描目标端已存在的 .strm 文件并回填缓存树。可避免升级后重复生成已存在的文件。</p>
+                            <button onclick="triggerStrmReconstruct('${taskId}')" class="btn btn-secondary text-sm" ${task.status !== 'IDLE' ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''}>
+                                <i class="fas fa-hammer"></i>开始重构
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
                     <div class="flex items-start gap-2">
                         <i class="fas fa-info-circle text-blue-600 mt-0.5"></i>
@@ -912,6 +926,40 @@ async function triggerStrmFullOverwrite(taskId) {
         }
     } catch (error) {
         console.error('全量覆盖失败:', error);
+        showToast('执行失败', 'error');
+    }
+}
+
+async function triggerStrmReconstruct(taskId) {
+    const task = strmTasksCache.find(t => t.id === taskId);
+    if (!task) {
+        showToast('任务不存在', 'error');
+        return;
+    }
+    
+    if (!confirm(`确认重构 STRM 任务「${task.name}」的缓存吗？\n\n系统将扫描目标目录中的 .strm 文件并恢复其缓存状态。`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/strm/tasks/${taskId}/reconstruct`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('缓存重构任务已启动', 'success');
+            closeStrmAdvancedTools();
+            setTimeout(() => {
+                openLogWindow(taskId, task.name + ' - STRM 日志');
+            }, 500);
+        } else {
+            showToast(result.error || '执行失败', 'error');
+        }
+    } catch (error) {
+        console.error('缓存重构失败:', error);
         showToast('执行失败', 'error');
     }
 }
