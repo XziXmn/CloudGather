@@ -7,6 +7,9 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from enum import Enum
 
+COPY_MODES = {"COPY", "HARDLINK", "SYMLINK"}
+TARGET_TYPES = {"LOCAL", "WEBDAV"}
+
 
 class ScheduleType(Enum):
     """调度类型枚举"""
@@ -59,7 +62,9 @@ class SyncTask:
         delete_time_base: str = "SYNC_COMPLETE",  # 删除时间基准：SYNC_COMPLETE / FILE_CREATE
         delete_parent: bool = False,  # 是否同时尝试删除上级目录
         delete_parent_levels: int = 0,  # 从文件所在目录向上最多尝试删除的层级数（0 表示不删目录）
-        delete_parent_force: bool = False  # 是否强制删除非空目录，就算目录下有未同步的元数据或者其他文件也删除
+        delete_parent_force: bool = False,  # 是否强制删除非空目录，就算目录下有未同步的元数据或者其他文件也删除
+        copy_mode: str = "COPY",  # 写入方式：COPY/HARDLINK/SYMLINK
+        target_type: str = "LOCAL"  # 目标类型：LOCAL/WEBDAV
     ):
         """
         初始化同步任务
@@ -127,6 +132,12 @@ class SyncTask:
         self.delete_parent_levels = levels
         # 是否强制删除非空目录
         self.delete_parent_force = bool(delete_parent_force)
+        self.copy_mode = (copy_mode or "COPY").upper()
+        if self.copy_mode not in COPY_MODES:
+            self.copy_mode = "COPY"
+        self.target_type = (target_type or "LOCAL").upper()
+        if self.target_type not in TARGET_TYPES:
+            self.target_type = "LOCAL"
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -162,7 +173,9 @@ class SyncTask:
             "delete_time_base": self.delete_time_base,
             "delete_parent": self.delete_parent,
             "delete_parent_levels": self.delete_parent_levels,
-            "delete_parent_force": self.delete_parent_force
+            "delete_parent_force": self.delete_parent_force,
+            "copy_mode": self.copy_mode,
+            "target_type": self.target_type
         }
     
     @classmethod
@@ -202,7 +215,9 @@ class SyncTask:
             delete_time_base=data.get("delete_time_base", "SYNC_COMPLETE"),
             delete_parent=data.get("delete_parent", False),
             delete_parent_levels=data.get("delete_parent_levels", 0),
-            delete_parent_force=data.get("delete_parent_force", False)
+            delete_parent_force=data.get("delete_parent_force", False),
+            copy_mode=data.get("copy_mode", "COPY"),
+            target_type=data.get("target_type", "LOCAL")
         )
     
     def update_status(self, new_status: TaskStatus):

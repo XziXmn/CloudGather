@@ -18,7 +18,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from core.models import SyncTask, TaskStatus, ScheduleType, StrmTask
-from core.worker import FileSyncer
+from core.worker import FileSyncer, WebDavSyncer
 from core.database import Database
 
 # 配置文件 Schema 版本号，用于兼容旧版配置并做迁移
@@ -534,6 +534,13 @@ class TaskScheduler:
     def _validate_task_paths(self, task: SyncTask) -> bool:
         """检查任务的源/目标目录可用性，并在需要时创建目标目录"""
         try:
+            if getattr(task, "copy_mode", "COPY") == "SYMLINK" and getattr(task, "delete_source", False):
+                self._log("✗ 软链接模式不能同时删除源文件，否则目标链接会失效")
+                return False
+            if getattr(task, "target_type", "LOCAL") == "WEBDAV" and getattr(task, "copy_mode", "COPY") != "COPY":
+                self._log("✗ WebDAV 目标只支持复制文件")
+                return False
+
             source = Path(task.source_path)
             target = Path(task.target_path)
             
@@ -546,6 +553,16 @@ class TaskScheduler:
             if not os.access(source, os.R_OK):
                 self._log(f"✗ 没有读取源目录的权限: {source}")
                 return False
+
+            if getattr(task, "target_type", "LOCAL") == "WEBDAV":
+                from api.settings import create_webdav_client, load_webdav_config
+                config = load_webdav_config()
+                if not config.get("url"):
+                    self._log("✗ 未配置 WebDAV 服务器")
+                    return False
+                client = create_webdav_client(config)
+                client.ensure_dir(task.target_path)
+                return True
             
             if not target.exists():
                 target.mkdir(parents=True, exist_ok=True)
@@ -862,24 +879,34 @@ class TaskScheduler:
         
         # 执行同步
         try:
-            syncer = FileSyncer(
-                source_dir=task.source_path,
-                target_dir=task.target_path,
-                task_id=task_id,
-                db=self.db
-            )
-            
             # 获取系统重试设置
-            from api.settings import load_system_config
+            from api.settings import create_webdav_client, load_system_config, load_webdav_config
             system_config = load_system_config()
             retry_count = system_config.get('sync_retry_count', 3)
+
+            if getattr(task, "target_type", "LOCAL") == "WEBDAV":
+                webdav_config = load_webdav_config()
+                syncer = WebDavSyncer(
+                    source_dir=task.source_path,
+                    target_dir=task.target_path,
+                    client=create_webdav_client(webdav_config)
+                )
+                thread_count = 1
+            else:
+                syncer = FileSyncer(
+                    source_dir=task.source_path,
+                    target_dir=task.target_path,
+                    task_id=task_id,
+                    db=self.db
+                )
+                thread_count = task.thread_count
             
             stats = syncer.sync_directory(
                 overwrite_existing=task.overwrite_existing,
                 rule_not_exists=task.rule_not_exists,
                 rule_size_diff=task.rule_size_diff,
                 rule_mtime_newer=task.rule_mtime_newer,
-                thread_count=task.thread_count,
+                thread_count=thread_count,
                 log_callback=self._log,
                 progress_callback=lambda s: self._update_progress(task_id, s),
                 is_slow_storage=task.is_slow_storage,
@@ -888,7 +915,8 @@ class TaskScheduler:
                 suffix_mode=task.suffix_mode,
                 suffix_list=task.suffix_list,
                 file_result_callback=lambda src, dst, result: self._on_file_synced(task, src, result),
-                retry_count=retry_count
+                retry_count=retry_count,
+                copy_mode=getattr(task, "copy_mode", "COPY")
             )
             
             # 同步完成后再次处理该任务删除队列（确保延迟为 0 的记录立即执行）

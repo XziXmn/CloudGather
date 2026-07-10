@@ -5,7 +5,7 @@
 **基于飞牛OS的媒体文件同步工具**
 
 [![Docker Image](https://img.shields.io/badge/docker-xzixmn%2Fcloudgather-blue)](https://hub.docker.com/r/xzixmn/cloudgather)
-[![Version](https://img.shields.io/badge/version-0.5.3-green)](https://github.com/xzixmn/cloudgather)
+[![Version](https://img.shields.io/badge/version-0.6.2-green)](https://github.com/xzixmn/cloudgather)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-orange)](LICENSE)
 
 专为飞牛OS设计，将本地下载的影视资源自动备份到网盘，配合strm文件实现302播放

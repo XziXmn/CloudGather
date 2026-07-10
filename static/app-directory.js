@@ -49,14 +49,15 @@ function debounce(func, wait) {
 
 async function showDirectoryDropdown(input) {
     const path = input.value.trim() || '/';
+    const isWebDavTarget = input.id === 'taskTarget' && document.getElementById('targetType')?.value === 'WEBDAV';
+    const endpoint = isWebDavTarget ? '/api/webdav/directories' : '/api/directories';
     
     try {
-        const response = await fetch(`/api/directories?path=${encodeURIComponent(path)}`);
+        const response = await fetch(`${endpoint}?path=${encodeURIComponent(path)}`);
         const data = await response.json();
         
         if (!data.success && data.error) {
-            // 如果有错误，不显示下拉框
-            removeDirectoryDropdown();
+            renderDirectoryDropdown(input, [], data.current_path || path, null, data.error);
             return;
         }
         
@@ -66,14 +67,14 @@ async function showDirectoryDropdown(input) {
             return;
         }
         
-        renderDirectoryDropdown(input, directories, data.current_path, data.parent_path);
+        renderDirectoryDropdown(input, directories, data.current_path, data.parent_path, data.warning);
     } catch (error) {
         console.error('获取目录失败:', error);
         removeDirectoryDropdown();
     }
 }
 
-function renderDirectoryDropdown(input, directories, currentPath, parentPath) {
+function renderDirectoryDropdown(input, directories, currentPath, parentPath, warning = null) {
     removeDirectoryDropdown();
     
     const dropdown = document.createElement('div');
@@ -99,6 +100,13 @@ function renderDirectoryDropdown(input, directories, currentPath, parentPath) {
         pathInfo.className = 'px-3 py-2 text-xs text-gray-500 border-b border-gray-200 font-mono';
         pathInfo.textContent = `当前: ${currentPath}`;
         dropdown.appendChild(pathInfo);
+    }
+
+    if (warning) {
+        const warningItem = document.createElement('div');
+        warningItem.className = 'px-3 py-2 text-xs text-orange-600 border-b border-orange-100 bg-orange-50';
+        warningItem.textContent = warning;
+        dropdown.appendChild(warningItem);
     }
     
     // 添加返回上一级

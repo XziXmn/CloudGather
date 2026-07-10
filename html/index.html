@@ -493,6 +493,46 @@
                             </div>
                         </div>
                         
+                        <!-- WebDAV 配置 -->
+                        <div class="card">
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <h3 class="font-bold text-lg flex items-center gap-2">
+                                        <i class="fas fa-cloud-arrow-up text-cyan-500"></i>WebDAV 配置
+                                    </h3>
+                                    <p class="text-sm text-gray-500 mt-1">配置 WebDAV 目标，用于同步任务直传</p>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm text-gray-600 mb-2">WebDAV 地址</label>
+                                    <input type="text" id="webdav-url" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-cyan-400 outline-none bg-white" placeholder="https://example.com/dav" value="">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">用户名</label>
+                                    <input type="text" id="webdav-username" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-cyan-400 outline-none bg-white" placeholder="user" value="">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">密码</label>
+                                    <input type="password" id="webdav-password" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-cyan-400 outline-none bg-white" placeholder="输入密码" value="">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">根路径</label>
+                                    <input type="text" id="webdav-root-path" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-cyan-400 outline-none bg-white font-mono text-sm" placeholder="/" value="/">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-600 mb-2">超时 (秒)</label>
+                                    <input type="number" id="webdav-timeout" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-cyan-400 outline-none bg-white" min="5" max="300" value="30">
+                                </div>
+                                <div class="md:col-span-2 mt-2">
+                                    <button onclick="testWebDavConnection()" class="btn btn-secondary text-sm">
+                                        <i class="fas fa-plug"></i>测试连接
+                                    </button>
+                                    <span id="webdav-connection-status" class="ml-3 text-sm"></span>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- 文件扩展名设置 -->
                         <div class="card">
                             <div class="flex items-center justify-between mb-4">
@@ -745,7 +785,14 @@
                         <input type="text" id="taskSource" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/source/movies" autocomplete="off">
                     </div>
                     <div class="task-tab-basic">
-                        <label class="block text-sm text-gray-600 mb-2">目标目录 * <span class="text-xs text-gray-400">(输入后自动提示)</span></label>
+                        <label class="block text-sm text-gray-600 mb-2">目标类型</label>
+                        <select id="targetType" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" onchange="toggleTargetType()">
+                            <option value="LOCAL" selected>本地目录</option>
+                            <option value="WEBDAV">WebDAV</option>
+                        </select>
+                    </div>
+                    <div class="task-tab-basic">
+                        <label class="block text-sm text-gray-600 mb-2"><span id="targetPathLabel">目标目录</span> * <span class="text-xs text-gray-400">(输入后自动提示)</span></label>
                         <input type="text" id="taskTarget" required class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white" placeholder="/target/movies" autocomplete="off">
                     </div>
                     
@@ -789,6 +836,18 @@
                         </p>
                     </div>
                     
+                    <div class="md:col-span-2 task-tab-basic">
+                        <label class="block text-sm text-gray-600 mb-2">写入方式</label>
+                        <select id="copyMode" class="w-full md:w-64 px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                            <option value="COPY" selected>复制文件</option>
+                            <option value="HARDLINK">硬链接</option>
+                            <option value="SYMLINK">软链接</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-2">
+                            <i class="fas fa-info-circle"></i> 硬链接仅适合同一文件系统；软链接不能和删除源文件同时使用。
+                        </p>
+                    </div>
+
                     <!-- 过滤规则：文件大小 & 后缀 -->
                     <div class="md:col-span-2 task-tab-advanced">
                         <div class="border border-gray-200 rounded-lg p-4 bg-white dark:bg-gray-900 space-y-3">

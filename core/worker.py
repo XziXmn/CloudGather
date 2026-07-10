@@ -8,10 +8,14 @@ import json
 import time
 import shutil
 import hashlib
+import posixpath
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional, Tuple, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from core.models import COPY_MODES
+from core.webdav_client import WebDavClient
 
 
 class FileSyncer:
@@ -260,7 +264,8 @@ class FileSyncer:
         size_max_bytes: Optional[int] = None,
         suffix_mode: str = "NONE",
         suffix_list: Optional[list[str]] = None,
-        retry_count: int = 0
+        retry_count: int = 0,
+        copy_mode: str = "COPY"
     ) -> str:
         """
         同步单个文件（原子化写入，支持子规则，支持重试）
@@ -278,6 +283,7 @@ class FileSyncer:
             suffix_mode: 后缀模式
             suffix_list: 后缀列表
             retry_count: 失败重试次数
+            copy_mode: 写入方式：COPY/HARDLINK/SYMLINK
             
         Returns:
             同步状态: "Success", "Skipped (Ignored)", "Skipped (Active)", "Skipped (Unchanged)", "Failed"
@@ -359,14 +365,17 @@ class FileSyncer:
                 temp_file = target_file.parent / f".tmp_{target_file.name}"
                 
                 # 7. 复制文件
+                copy_mode = (copy_mode or "COPY").upper()
+                if copy_mode not in COPY_MODES:
+                    copy_mode = "COPY"
+                action_name = self._copy_mode_label(copy_mode)
                 if log_callback:
-                    log_callback(f"开始复制: {source_file.name} ({self._format_size(file_size)})")
+                    log_callback(f"开始{action_name}: {source_file.name} ({self._format_size(file_size)})")
                 
-                # 使用 shutil.copy2 保留元数据
-                shutil.copy2(source_file, temp_file)
+                self._write_target(source_file, temp_file, copy_mode)
                 
                 if log_callback:
-                    log_callback(f"复制完成: {source_file.name}")
+                    log_callback(f"{action_name}完成: {source_file.name}")
                 
                 # 8. 校验文件大小
                 temp_size = temp_file.stat().st_size
@@ -421,7 +430,8 @@ class FileSyncer:
         suffix_mode: str = "NONE",
         suffix_list: Optional[list[str]] = None,
         file_result_callback: Optional[Callable[[Path, Path, str], None]] = None,
-        retry_count: int = 0
+        retry_count: int = 0,
+        copy_mode: str = "COPY"
     ) -> dict:
         """
         同步整个目录（支持多线程，固定递归模式，支持子规则）
@@ -441,6 +451,7 @@ class FileSyncer:
             suffix_list: 后缀列表，小写且不带点，如 ["mp4", "mkv"]
             file_result_callback: 单文件处理结果回调，参数为 (source_file, target_file, result)
             retry_count: 失败重试次数
+            copy_mode: 写入方式：COPY/HARDLINK/SYMLINK
             
         Returns:
             同步统计信息字典
@@ -486,7 +497,8 @@ class FileSyncer:
                     size_max_bytes=size_max_bytes,
                     suffix_mode=suffix_mode,
                     suffix_list=suffix_list,
-                    retry_count=retry_count
+                    retry_count=retry_count,
+                    copy_mode=copy_mode
                 )
                 if file_result_callback:
                     file_result_callback(source_file, target_file, result)
@@ -513,7 +525,8 @@ class FileSyncer:
                         size_max_bytes,
                         suffix_mode,
                         suffix_list,
-                        retry_count
+                        retry_count,
+                        copy_mode
                     ): (source_file, target_file)
                     for source_file, target_file in file_tasks
                 }
@@ -541,7 +554,7 @@ class FileSyncer:
         # 不再在这里输出详细统计，统计信息将在调度器层面汇总输出
         
         return stats
-    
+
     @staticmethod
     def _update_stats(stats: dict, result: str):
         """
@@ -580,6 +593,25 @@ class FileSyncer:
                 return f"{size_bytes:.2f} {unit}"
             size_bytes /= 1024.0
         return f"{size_bytes:.2f} PB"
+
+    @staticmethod
+    def _copy_mode_label(copy_mode: str) -> str:
+        """返回写入方式的日志名称"""
+        return {
+            "HARDLINK": "硬链接",
+            "SYMLINK": "软链接",
+        }.get(copy_mode, "复制")
+
+    @staticmethod
+    def _write_target(source_file: Path, temp_file: Path, copy_mode: str):
+        """按指定模式写入临时目标文件"""
+        if copy_mode == "HARDLINK":
+            os.link(source_file, temp_file)
+            return
+        if copy_mode == "SYMLINK":
+            os.symlink(source_file.resolve(), temp_file)
+            return
+        shutil.copy2(source_file, temp_file)
 
     def _cleanup_temp_files(self, log_callback: Optional[Callable[[str], None]] = None):
         """清理目标目录中的临时文件"""
@@ -691,3 +723,231 @@ class FileSyncer:
             log_callback(f"✅ 重构完成! 扫描:{stats['found']}, 匹配:{stats['matched']}, 更新:{stats['updated']}, 错误:{stats['errors']}")
         
         return stats
+
+
+class WebDavSyncer:
+    """WebDAV 目录同步器"""
+
+    IGNORE_LIST = FileSyncer.IGNORE_LIST
+    STABILITY_CHECK_DELAY = FileSyncer.STABILITY_CHECK_DELAY
+
+    def __init__(self, source_dir: str, target_dir: str, client: WebDavClient):
+        self.source_dir = Path(source_dir)
+        self.target_dir = target_dir
+        self.client = client
+
+        if not self.source_dir.exists():
+            raise ValueError(f"源目录不存在: {self.source_dir}")
+
+    def sync_directory(
+        self,
+        overwrite_existing: bool = False,
+        rule_not_exists: bool = False,
+        rule_size_diff: bool = False,
+        rule_mtime_newer: bool = False,
+        thread_count: int = 1,
+        log_callback: Optional[Callable[[str], None]] = None,
+        progress_callback: Optional[Callable[[dict], None]] = None,
+        size_min_bytes: Optional[int] = None,
+        size_max_bytes: Optional[int] = None,
+        suffix_mode: str = "NONE",
+        suffix_list: Optional[list[str]] = None,
+        file_result_callback: Optional[Callable[[Path, Path, str], None]] = None,
+        retry_count: int = 0,
+    ) -> dict:
+        """同步本地目录到 WebDAV 远端目录"""
+        stats = {
+            "success": 0,
+            "skipped_ignored": 0,
+            "skipped_active": 0,
+            "skipped_unchanged": 0,
+            "skipped_filtered": 0,
+            "failed": 0,
+            "total": 0
+        }
+
+        if log_callback:
+            log_callback(f"开始 WebDAV 同步: {self.source_dir} -> {self.target_dir}")
+            if thread_count > 1:
+                log_callback("WebDAV MVP 使用单线程上传")
+
+        file_tasks = []
+        for source_file in self.source_dir.glob("**/*"):
+            if not source_file.is_file():
+                continue
+            stats["total"] += 1
+            remote_path = self._remote_path(source_file.relative_to(self.source_dir))
+            file_tasks.append((source_file, remote_path))
+
+        for source_file, remote_path in file_tasks:
+            result = self.sync_file(
+                source_file=source_file,
+                remote_path=remote_path,
+                overwrite_existing=overwrite_existing,
+                rule_not_exists=rule_not_exists,
+                rule_size_diff=rule_size_diff,
+                rule_mtime_newer=rule_mtime_newer,
+                log_callback=log_callback,
+                size_min_bytes=size_min_bytes,
+                size_max_bytes=size_max_bytes,
+                suffix_mode=suffix_mode,
+                suffix_list=suffix_list,
+                retry_count=retry_count,
+            )
+            if file_result_callback:
+                file_result_callback(source_file, Path(remote_path), result)
+            FileSyncer._update_stats(stats, result)
+            if progress_callback:
+                progress_callback(stats)
+
+        return stats
+
+    def sync_file(
+        self,
+        source_file: Path,
+        remote_path: str,
+        overwrite_existing: bool = False,
+        rule_not_exists: bool = False,
+        rule_size_diff: bool = False,
+        rule_mtime_newer: bool = False,
+        log_callback: Optional[Callable[[str], None]] = None,
+        size_min_bytes: Optional[int] = None,
+        size_max_bytes: Optional[int] = None,
+        suffix_mode: str = "NONE",
+        suffix_list: Optional[list[str]] = None,
+        retry_count: int = 0,
+    ) -> str:
+        """同步单个文件到 WebDAV"""
+        max_attempts = retry_count + 1
+
+        for attempt in range(max_attempts):
+            try:
+                if attempt > 0 and log_callback:
+                    log_callback(f"正在重试 WebDAV 上传 ({attempt}/{retry_count}): {source_file.name}")
+
+                filtered = self._filter_source(
+                    source_file,
+                    log_callback,
+                    size_min_bytes,
+                    size_max_bytes,
+                    suffix_mode,
+                    suffix_list,
+                )
+                if filtered:
+                    return filtered
+
+                should_sync, _ = self.should_sync_file(
+                    source_file,
+                    remote_path,
+                    overwrite_existing,
+                    rule_not_exists,
+                    rule_size_diff,
+                    rule_mtime_newer,
+                )
+                if not should_sync:
+                    if log_callback:
+                        log_callback(f"已跳过: {source_file.name}")
+                    return "Skipped (Unchanged)"
+
+                is_stable, file_size = FileSyncer.check_file_stability(self, source_file, log_callback)
+                if not is_stable:
+                    if log_callback:
+                        log_callback(f"已跳过: {source_file.name} (文件活动中)")
+                    return "Skipped (Active)"
+
+                if log_callback:
+                    log_callback(f"开始 WebDAV 上传: {source_file.name} ({FileSyncer._format_size(file_size)})")
+
+                self.client.upload_file(source_file, remote_path)
+
+                if log_callback:
+                    log_callback(f"✓ WebDAV 上传成功: {source_file.name}")
+                return "Success"
+
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"✗ WebDAV 上传出错 (第 {attempt + 1} 次尝试): {source_file.name} - {e}")
+                if attempt < retry_count:
+                    time.sleep(2)
+
+        if log_callback:
+            log_callback(f"✗ WebDAV 上传最终失败: {source_file.name} - 已重试 {retry_count} 次")
+        return "Failed"
+
+    def should_sync_file(
+        self,
+        source_file: Path,
+        remote_path: str,
+        overwrite_existing: bool,
+        rule_not_exists: bool,
+        rule_size_diff: bool,
+        rule_mtime_newer: bool,
+    ) -> Tuple[bool, str]:
+        """判断 WebDAV 远端文件是否需要上传"""
+        info = self.client.info(remote_path)
+        if not info:
+            if rule_not_exists:
+                return True, "target_not_exists (rule)"
+            if overwrite_existing:
+                return True, "target_not_exists (overwrite_mode)"
+            return False, "target_not_exists (no_rule)"
+
+        source_stat = source_file.stat()
+        remote_size = info.get("size")
+        remote_modified = info.get("modified")
+        if rule_size_diff and remote_size != source_stat.st_size:
+            return True, "size_diff (rule)"
+        if rule_mtime_newer and remote_modified and source_stat.st_mtime > remote_modified:
+            return True, "mtime_newer (rule)"
+        if overwrite_existing:
+            return True, "overwrite_mode"
+        return False, "unchanged"
+
+    def _filter_source(
+        self,
+        source_file: Path,
+        log_callback: Optional[Callable[[str], None]],
+        size_min_bytes: Optional[int],
+        size_max_bytes: Optional[int],
+        suffix_mode: str,
+        suffix_list: Optional[list[str]],
+    ) -> Optional[str]:
+        """复用本地同步的过滤规则"""
+        if FileSyncer.should_ignore(self, source_file):
+            if log_callback:
+                log_callback(f"已忽略: {source_file.name}")
+            return "Skipped (Ignored)"
+
+        mode = (suffix_mode or "NONE").upper()
+        if mode != "NONE":
+            ext = source_file.suffix.lower().lstrip(".")
+            suffixes = [s.lower().lstrip(".") for s in suffix_list] if suffix_list else []
+            if mode == "INCLUDE" and (not ext or ext not in suffixes):
+                if log_callback:
+                    log_callback(f"已过滤: {source_file.name} (mode=INCLUDE, ext={ext or '-'})")
+                return "Skipped (Filtered)"
+            if mode == "EXCLUDE" and ext and ext in suffixes:
+                if log_callback:
+                    log_callback(f"已过滤: {source_file.name} (mode=EXCLUDE, ext={ext})")
+                return "Skipped (Filtered)"
+
+        if size_min_bytes is not None or size_max_bytes is not None:
+            size = source_file.stat().st_size
+            if size_min_bytes is not None and size < size_min_bytes:
+                if log_callback:
+                    log_callback(f"已跳过: {source_file.name} ({FileSyncer._format_size(size)} < 最小 {FileSyncer._format_size(size_min_bytes)})")
+                return "Skipped (Filtered)"
+            if size_max_bytes is not None and size > size_max_bytes:
+                if log_callback:
+                    log_callback(f"已跳过: {source_file.name} ({FileSyncer._format_size(size)} > 最大 {FileSyncer._format_size(size_max_bytes)})")
+                return "Skipped (Filtered)"
+
+        return None
+
+    def _remote_path(self, relative_path: Path) -> str:
+        rel_path = "/".join(relative_path.parts)
+        return posixpath.normpath(f"/{self.target_dir.strip('/')}/{rel_path}")
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        return FileSyncer._format_size(size_bytes)

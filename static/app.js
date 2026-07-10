@@ -57,6 +57,7 @@ function switchView(view, navEl = null) {
         loadTasks();
     } else if (view === 'system-settings') {
         loadOpenListConfig();
+        loadWebDavConfig();
         loadFileExtensions();
         loadSystemConfig();
     }
@@ -263,6 +264,11 @@ function renderTasks(tasks) {
         if (filterParts.length > 0) {
             filterInfo = `<div class="text-xs text-gray-500 mt-1"><i class="fas fa-filter mr-1"></i>过滤: ${filterParts.join('；')}</div>`;
         }
+
+        const copyModeLabel = {
+            HARDLINK: '硬链接',
+            SYMLINK: '软链接'
+        }[task.copy_mode] || '';
         
         // 删除源文件配置概览
         let deleteInfo = '';
@@ -299,7 +305,9 @@ function renderTasks(tasks) {
                     <div class="flex items-center gap-3 mb-1">
                         <h4 class="text-lg font-bold">${task.name}</h4>
                         <span class="status-badge-container">${getStatusBadge(task.status)}</span>
+                        ${(task.target_type || 'LOCAL') === 'WEBDAV' ? '<span class="text-xs px-2 py-1 bg-cyan-100 text-cyan-600 rounded" title="WebDAV 目标"><i class="fas fa-cloud-arrow-up mr-1"></i>WebDAV</span>' : ''}
                         ${task.is_slow_storage ? '<span class="text-xs px-2 py-1 bg-orange-100 text-orange-600 rounded" title="网络云盘优化"><i class="fas fa-hdd mr-1"></i>云盘</span>' : ''}
+                        ${copyModeLabel ? `<span class="text-xs px-2 py-1 bg-blue-100 text-blue-600 rounded" title="写入方式"><i class="fas fa-link mr-1"></i>${copyModeLabel}</span>` : ''}
                     </div>
                 </div>
                 <div class="flex items-center gap-2" title="${task.enabled ? '任务已启用' : '任务已禁用'}">
@@ -449,6 +457,26 @@ function switchTaskTab(tab) {
     }
 }
 
+function toggleTargetType() {
+    const targetType = document.getElementById('targetType')?.value || 'LOCAL';
+    const targetInput = document.getElementById('taskTarget');
+    const targetLabel = document.getElementById('targetPathLabel');
+    const copyModeSelect = document.getElementById('copyMode');
+
+    if (targetType === 'WEBDAV') {
+        if (targetLabel) targetLabel.textContent = 'WebDAV 远端目录';
+        if (targetInput) targetInput.placeholder = '/Movies';
+        if (copyModeSelect) {
+            copyModeSelect.value = 'COPY';
+            copyModeSelect.disabled = true;
+        }
+    } else {
+        if (targetLabel) targetLabel.textContent = '目标目录';
+        if (targetInput) targetInput.placeholder = '/target/movies';
+        if (copyModeSelect) copyModeSelect.disabled = false;
+    }
+}
+
 function showAddTaskModal() {
     // 检查是否有草稿
     const draft = localStorage.getItem('task-draft');
@@ -467,6 +495,9 @@ function showAddTaskModal() {
     document.getElementById('modalTitle').textContent = '添加任务';
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
+    const targetTypeSelect = document.getElementById('targetType');
+    if (targetTypeSelect) targetTypeSelect.value = 'LOCAL';
+    toggleTargetType();
     
     // 默认切换到基础配置标签页
     switchTaskTab('basic');
@@ -482,6 +513,8 @@ function showAddTaskModal() {
     if (suffixModeSelect) suffixModeSelect.value = 'NONE';
     if (suffixListInput) suffixListInput.value = '';
     if (suffixPresetPanel) suffixPresetPanel.style.display = 'none';
+    const copyModeSelect = document.getElementById('copyMode');
+    if (copyModeSelect) copyModeSelect.value = 'COPY';
     
     // 重置删除源文件设置
     const deleteSourceCheckbox = document.getElementById('deleteSource');
@@ -529,8 +562,13 @@ function loadDraft() {
             document.getElementById('taskName').value = draft.name || '';
             document.getElementById('taskSource').value = draft.source_path || '';
             document.getElementById('taskTarget').value = draft.target_path || '';
+            const targetTypeSelect = document.getElementById('targetType');
+            if (targetTypeSelect) targetTypeSelect.value = draft.target_type || 'LOCAL';
+            toggleTargetType();
             document.getElementById('cronExpression').value = draft.cron_expression || '';
             document.getElementById('taskThreadCount').value = draft.thread_count || 1;
+            const copyModeSelect = document.getElementById('copyMode');
+            if (copyModeSelect) copyModeSelect.value = draft.copy_mode || 'COPY';
             
             // 恢复子规则状态
             const rules = {
@@ -560,8 +598,10 @@ function saveDraft() {
         name: document.getElementById('taskName').value,
         source_path: document.getElementById('taskSource').value,
         target_path: document.getElementById('taskTarget').value,
+        target_type: document.getElementById('targetType') ? document.getElementById('targetType').value : 'LOCAL',
         cron_expression: document.getElementById('cronExpression').value,
         thread_count: parseInt(document.getElementById('taskThreadCount').value) || 1,
+        copy_mode: document.getElementById('copyMode') ? document.getElementById('copyMode').value : 'COPY',
         rule_not_exists: document.getElementById('ruleNotExists').dataset.active === 'true',
         rule_size_diff: document.getElementById('ruleSizeDiff').dataset.active === 'true',
         rule_mtime_newer: document.getElementById('ruleMtimeNewer').dataset.active === 'true'
@@ -646,6 +686,11 @@ async function editTask(taskId) {
         document.getElementById('taskName').value = task.name;
         document.getElementById('taskSource').value = task.source_path;
         document.getElementById('taskTarget').value = task.target_path;
+        const targetTypeSelect = document.getElementById('targetType');
+        if (targetTypeSelect) {
+            targetTypeSelect.value = task.target_type || 'LOCAL';
+            toggleTargetType();
+        }
         
         // 设置子规则按钮状态
         const rules = {
@@ -678,6 +723,10 @@ async function editTask(taskId) {
         const slowStorageCheckbox = document.getElementById('isSlowStorage');
         if (slowStorageCheckbox) {
             slowStorageCheckbox.checked = task.is_slow_storage || false;
+        }
+        const copyModeSelect = document.getElementById('copyMode');
+        if (copyModeSelect) {
+            copyModeSelect.value = task.copy_mode || 'COPY';
         }
         
         // 填充过滤规则
@@ -754,12 +803,14 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         name: document.getElementById('taskName').value,
         source_path: document.getElementById('taskSource').value,
         target_path: document.getElementById('taskTarget').value,
+        target_type: document.getElementById('targetType') ? document.getElementById('targetType').value : 'LOCAL',
         schedule_type: 'CRON',  // 只支持 Cron 模式
         cron_expression: document.getElementById('cronExpression').value.trim(),
         thread_count: parseInt(document.getElementById('taskThreadCount').value) || 1,
         rule_not_exists: document.getElementById('ruleNotExists').dataset.active === 'true',
         rule_size_diff: document.getElementById('ruleSizeDiff').dataset.active === 'true',
         rule_mtime_newer: document.getElementById('ruleMtimeNewer').dataset.active === 'true',
+        copy_mode: document.getElementById('copyMode') ? document.getElementById('copyMode').value : 'COPY',
         is_slow_storage: document.getElementById('isSlowStorage') ? document.getElementById('isSlowStorage').checked : false,
         enabled: true  // 默认启用，后续可通过开关控制
     };
@@ -867,7 +918,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 // 监听表单变化
 function initFormChangeListener() {
-    const inputs = ['taskName', 'taskSource', 'taskTarget', 'cronExpression', 'taskThreadCount', 'sizeMinMb', 'sizeMaxMb', 'suffixList', 'deleteDelayDays'];
+    const inputs = ['taskName', 'taskSource', 'taskTarget', 'targetType', 'cronExpression', 'taskThreadCount', 'copyMode', 'sizeMinMb', 'sizeMaxMb', 'suffixList', 'deleteDelayDays'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -1464,6 +1515,24 @@ async function loadOpenListConfig() {
     }
 }
 
+async function loadWebDavConfig() {
+    try {
+        const response = await fetch('/api/settings/webdav');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.config) {
+                document.getElementById('webdav-url').value = data.config.url || '';
+                document.getElementById('webdav-username').value = data.config.username || '';
+                document.getElementById('webdav-password').value = '';
+                document.getElementById('webdav-root-path').value = data.config.root_path || '/';
+                document.getElementById('webdav-timeout').value = data.config.timeout || 30;
+            }
+        }
+    } catch (error) {
+        console.error('加载 WebDAV 配置失败:', error);
+    }
+}
+
 /**
  * 保存所有设置
  */
@@ -1491,25 +1560,32 @@ async function saveAllSettings() {
                 nfo: document.getElementById('nfo-extensions').value.trim(),
                 other: document.getElementById('other-extensions').value.trim()
             };
+
+            const webdavConfig = {
+                url: document.getElementById('webdav-url').value.trim(),
+                username: document.getElementById('webdav-username').value.trim(),
+                password: document.getElementById('webdav-password').value.trim(),
+                root_path: document.getElementById('webdav-root-path').value.trim() || '/',
+                timeout: parseInt(document.getElementById('webdav-timeout').value) || 30
+            };
             
             const systemConfig = {
                 sync_retry_count: parseInt(document.getElementById('system-retry-count').value)
             };
             
-            // 验证
-            if (!openlistConfig.url) {
-                showNotification('请填写 OpenList 服务器地址', 'error');
-                btn.disabled = false;
-                btn.innerHTML = originalHtml;
-                return;
-            }
-            
-            // 并行发送请求
-            const results = await Promise.all([
-                fetch('/api/settings/openlist', {
+            const requests = [];
+            if (openlistConfig.url) {
+                requests.push(fetch('/api/settings/openlist', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(openlistConfig)
+                }));
+            }
+            requests.push(
+                fetch('/api/settings/webdav', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(webdavConfig)
                 }),
                 fetch('/api/settings/extensions', {
                     method: 'POST',
@@ -1521,7 +1597,8 @@ async function saveAllSettings() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(systemConfig)
                 })
-            ]);
+            );
+            const results = await Promise.all(requests);
             
             const data = await Promise.all(results.map(r => r.json()));
             
@@ -1529,6 +1606,7 @@ async function saveAllSettings() {
                 showNotification('所有设置已保存', 'success');
                 // 清空密码框并更新状态提示
                 document.getElementById('openlist-password').value = '';
+                document.getElementById('webdav-password').value = '';
                 updatePasswordStatusHint();
             } else {
                 const errors = data.filter(d => !d.success).map(d => d.error).join('; ');
@@ -1679,6 +1757,44 @@ async function testOpenListConnection() {
         console.error('测试 OpenList 连接失败:', error);
         statusEl.innerHTML = '<i class="fas fa-times-circle text-red-500"></i> <span class="text-red-600">连接失败: ' + error.message + '</span>';
         showNotification('连接测试失败: ' + error.message, 'error');
+    }
+}
+
+async function testWebDavConnection() {
+    const statusEl = document.getElementById('webdav-connection-status');
+    const config = {
+        url: document.getElementById('webdav-url').value.trim(),
+        username: document.getElementById('webdav-username').value.trim(),
+        password: document.getElementById('webdav-password').value.trim(),
+        root_path: document.getElementById('webdav-root-path').value.trim() || '/',
+        timeout: parseInt(document.getElementById('webdav-timeout').value) || 30
+    };
+
+    if (!config.url) {
+        showNotification('请填写 WebDAV 地址', 'error');
+        return;
+    }
+
+    statusEl.innerHTML = '<i class="fas fa-spinner fa-spin text-blue-500"></i> <span class="text-gray-600">连接测试中...</span>';
+
+    try {
+        const response = await fetch('/api/settings/webdav/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        const result = await response.json();
+        if (result.success) {
+            statusEl.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> <span class="text-green-600">' + result.message + '</span>';
+            showNotification(result.message, 'success');
+        } else {
+            statusEl.innerHTML = '<i class="fas fa-times-circle text-red-500"></i> <span class="text-red-600">连接失败: ' + (result.error || '未知错误') + '</span>';
+            showNotification('WebDAV 连接失败: ' + (result.error || '未知错误'), 'error');
+        }
+    } catch (error) {
+        console.error('测试 WebDAV 连接失败:', error);
+        statusEl.innerHTML = '<i class="fas fa-times-circle text-red-500"></i> <span class="text-red-600">连接失败: ' + error.message + '</span>';
+        showNotification('WebDAV 连接测试失败: ' + error.message, 'error');
     }
 }
 

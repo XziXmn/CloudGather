@@ -5,13 +5,17 @@
 
 import json
 import logging
+import posixpath
 from pathlib import Path
 from typing import Optional
 from flask import Blueprint, jsonify, request
 import requests
 
+from core.webdav_client import WebDavClient
+
 # 配置文件路径
 OPENLIST_CONFIG_PATH = Path('config/openlist.json')
+WEBDAV_CONFIG_PATH = Path('config/webdav.json')
 EXTENSIONS_CONFIG_PATH = Path('config/extensions.json')
 SYSTEM_CONFIG_PATH = Path('config/system.json')
 
@@ -28,6 +32,7 @@ def init_settings_bp(is_docker: bool):
     
     # 确保配置目录存在
     OPENLIST_CONFIG_PATH.parent.mkdir(exist_ok=True)
+    WEBDAV_CONFIG_PATH.parent.mkdir(exist_ok=True)
     EXTENSIONS_CONFIG_PATH.parent.mkdir(exist_ok=True)
     SYSTEM_CONFIG_PATH.parent.mkdir(exist_ok=True)
 
@@ -52,6 +57,39 @@ def save_openlist_config(config: dict) -> bool:
     except Exception as e:
         logging.error(f"保存 OpenList 配置失败: {e}")
         return False
+
+
+def load_webdav_config() -> dict:
+    """加载 WebDAV 配置"""
+    if WEBDAV_CONFIG_PATH.exists():
+        try:
+            with open(WEBDAV_CONFIG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"加载 WebDAV 配置失败: {e}")
+    return {}
+
+
+def save_webdav_config(config: dict) -> bool:
+    """保存 WebDAV 配置"""
+    try:
+        with open(WEBDAV_CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logging.error(f"保存 WebDAV 配置失败: {e}")
+        return False
+
+
+def create_webdav_client(config: dict) -> WebDavClient:
+    """根据配置创建 WebDAV 客户端"""
+    return WebDavClient(
+        url=(config.get('url') or '').strip(),
+        username=(config.get('username') or '').strip(),
+        password=(config.get('password') or '').strip(),
+        root_path=(config.get('root_path') or '/').strip() or '/',
+        timeout=int(config.get('timeout') or 30)
+    )
 
 
 @settings_bp.route('/settings/openlist', methods=['GET'])
@@ -145,6 +183,93 @@ def test_openlist_connection():
     except Exception as e:
         logging.error(f"测试 OpenList 连接异常: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/webdav', methods=['GET'])
+def get_webdav_config():
+    """获取 WebDAV 配置"""
+    config = load_webdav_config()
+    config_copy = config.copy()
+    if 'password' in config_copy:
+        config_copy['password'] = ''
+    return jsonify({'success': True, 'config': config_copy})
+
+
+@settings_bp.route('/settings/webdav', methods=['POST'])
+def save_webdav_config_api():
+    """保存 WebDAV 配置"""
+    try:
+        data = request.get_json() or {}
+        url = data.get('url', '').strip()
+        if not url:
+            if save_webdav_config({}):
+                return jsonify({'success': True, 'message': 'WebDAV 配置已清空'})
+            return jsonify({'success': False, 'error': '保存配置失败'}), 500
+
+        config = {
+            'url': url,
+            'username': data.get('username', '').strip(),
+            'password': data.get('password', '').strip(),
+            'root_path': data.get('root_path', '/').strip() or '/',
+            'timeout': int(data.get('timeout') or 30)
+        }
+        if not config['password']:
+            old_config = load_webdav_config()
+            if 'password' in old_config:
+                config['password'] = old_config['password']
+        if config['timeout'] < 5:
+            config['timeout'] = 5
+        if config['timeout'] > 300:
+            config['timeout'] = 300
+
+        if save_webdav_config(config):
+            logging.info(f"✅ WebDAV 配置已保存: {url}")
+            return jsonify({'success': True, 'message': '配置已保存'})
+        return jsonify({'success': False, 'error': '保存配置失败'}), 500
+    except Exception as e:
+        logging.error(f"保存 WebDAV 配置异常: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/webdav/test', methods=['POST'])
+def test_webdav_connection():
+    """测试 WebDAV 连接"""
+    try:
+        data = request.get_json() or {}
+        if not data.get('url', '').strip():
+            return jsonify({'success': False, 'error': 'WebDAV 地址不能为空'}), 400
+        if not data.get('password', '').strip():
+            old_config = load_webdav_config()
+            data['password'] = old_config.get('password', '')
+
+        client = create_webdav_client(data)
+        if client.test_connection():
+            return jsonify({'success': True, 'message': 'WebDAV 连接成功'})
+        return jsonify({'success': False, 'error': 'WebDAV 根目录不可访问'})
+    except Exception as e:
+        logging.error(f"测试 WebDAV 连接异常: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/webdav/directories', methods=['GET'])
+def api_webdav_directories():
+    """列出 WebDAV 远端目录"""
+    path = request.args.get('path', '/') or '/'
+    try:
+        config = load_webdav_config()
+        if not config.get('url'):
+            return jsonify({'success': False, 'error': '请先保存 WebDAV 配置', 'current_path': path, 'directories': []})
+        client = create_webdav_client(config)
+        dirs = client.list_dir(path)
+        parent_path = posixpath.dirname(path.rstrip('/')) or '/'
+        return jsonify({
+            'success': True,
+            'current_path': path,
+            'parent_path': parent_path if parent_path != path else None,
+            'directories': dirs
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'current_path': path, 'directories': []})
 
 
 def _test_with_token(url: str, token: str) -> dict:

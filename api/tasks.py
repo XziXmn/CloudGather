@@ -11,7 +11,7 @@ from typing import Dict, Optional
 from flask import Blueprint, jsonify, request
 from apscheduler.triggers.cron import CronTrigger
 
-from core.models import SyncTask
+from core.models import COPY_MODES, TARGET_TYPES, SyncTask
 from core.worker import FileSyncer
 
 tasks_bp = Blueprint('tasks', __name__)
@@ -57,10 +57,21 @@ def _parse_bool(value, default=False):
     return default
 
 
-def _validate_paths_for_request(source_path: str, target_path: str):
+def _parse_copy_mode(value):
+    """解析本地写入方式"""
+    mode = (value or "COPY").upper()
+    return mode if mode in COPY_MODES else None
+
+
+def _parse_target_type(value):
+    """解析目标类型"""
+    target_type = (value or "LOCAL").upper()
+    return target_type if target_type in TARGET_TYPES else None
+
+
+def _validate_paths_for_request(source_path: str, target_path: str, target_type: str = "LOCAL"):
     """校验源/目标路径可用性，并在需要时创建目标目录"""
     source = Path(source_path)
-    target = Path(target_path)
     
     if not source.exists():
         return False, f"源目录不存在: {source}"
@@ -68,6 +79,13 @@ def _validate_paths_for_request(source_path: str, target_path: str):
         return False, f"源路径不是目录: {source}"
     if not os.access(source, os.R_OK):
         return False, f"没有读取源目录的权限: {source}"
+
+    if target_type == "WEBDAV":
+        if not target_path or not str(target_path).strip():
+            return False, "WebDAV 远端目录不能为空"
+        return True, None
+
+    target = Path(target_path)
     
     try:
         if not target.exists():
@@ -101,7 +119,10 @@ def api_tasks():
 
     source_path = data['source_path']
     target_path = data['target_path']
-    ok, err = _validate_paths_for_request(source_path, target_path)
+    target_type = _parse_target_type(data.get('target_type', 'LOCAL'))
+    if not target_type:
+        return jsonify({'success': False, 'error': '目标类型无效'}), 400
+    ok, err = _validate_paths_for_request(source_path, target_path, target_type)
     if not ok:
         return jsonify({'success': False, 'error': err}), 400
 
@@ -131,6 +152,13 @@ def api_tasks():
             return jsonify({'success': False, 'error': '删除目录层级必须是非负整数'}), 400
     # 强制删除非空目录：就算目录下有未同步的元数据或者其他文件也删除（仍会保护未到期文件）
     delete_parent_force = _parse_bool(data.get('delete_parent_force', False), False)
+    copy_mode = _parse_copy_mode(data.get('copy_mode', 'COPY'))
+    if not copy_mode:
+        return jsonify({'success': False, 'error': '复制方式无效'}), 400
+    if target_type == 'WEBDAV' and copy_mode != 'COPY':
+        return jsonify({'success': False, 'error': 'WebDAV 目标只支持复制文件'}), 400
+    if copy_mode == 'SYMLINK' and delete_source:
+        return jsonify({'success': False, 'error': '软链接模式不能同时删除源文件'}), 400
     
     if schedule_type == 'CRON':
         # Cron 调度
@@ -166,7 +194,9 @@ def api_tasks():
             delete_time_base=delete_time_base,
             delete_parent=delete_parent,
             delete_parent_levels=delete_parent_levels,
-            delete_parent_force=delete_parent_force
+            delete_parent_force=delete_parent_force,
+            copy_mode=copy_mode,
+            target_type=target_type
         )
     else:
         # 间隔调度
@@ -200,7 +230,9 @@ def api_tasks():
             delete_time_base=delete_time_base,
             delete_parent=delete_parent,
             delete_parent_levels=delete_parent_levels,
-            delete_parent_force=delete_parent_force
+            delete_parent_force=delete_parent_force,
+            copy_mode=copy_mode,
+            target_type=target_type
         )
 
     if scheduler.add_task(task):
@@ -230,6 +262,11 @@ def api_task_detail(task_id: str):
         updates['source_path'] = data['source_path']
     if 'target_path' in data:
         updates['target_path'] = data['target_path']
+    if 'target_type' in data:
+        target_type = _parse_target_type(data.get('target_type'))
+        if not target_type:
+            return jsonify({'success': False, 'error': '目标类型无效'}), 400
+        updates['target_type'] = target_type
     if 'interval' in data:
         try:
             updates['interval'] = int(data['interval'])
@@ -292,12 +329,26 @@ def api_task_detail(task_id: str):
             updates['delete_parent_levels'] = levels_val
     if 'delete_parent_force' in data:
         updates['delete_parent_force'] = _parse_bool(data['delete_parent_force'], getattr(task, 'delete_parent_force', False))
+    if 'copy_mode' in data:
+        copy_mode = _parse_copy_mode(data.get('copy_mode'))
+        if not copy_mode:
+            return jsonify({'success': False, 'error': '复制方式无效'}), 400
+        updates['copy_mode'] = copy_mode
+
+    effective_copy_mode = updates.get('copy_mode', getattr(task, 'copy_mode', 'COPY'))
+    effective_delete_source = updates.get('delete_source', getattr(task, 'delete_source', False))
+    effective_target_type = updates.get('target_type', getattr(task, 'target_type', 'LOCAL'))
+    if effective_target_type == 'WEBDAV' and effective_copy_mode != 'COPY':
+        return jsonify({'success': False, 'error': 'WebDAV 目标只支持复制文件'}), 400
+    if effective_copy_mode == 'SYMLINK' and effective_delete_source:
+        return jsonify({'success': False, 'error': '软链接模式不能同时删除源文件'}), 400
 
     # 路径更新时校验并创建目标目录
-    if 'source_path' in updates or 'target_path' in updates:
+    if 'source_path' in updates or 'target_path' in updates or 'target_type' in updates:
         new_source = updates.get('source_path', task.source_path)
         new_target = updates.get('target_path', task.target_path)
-        ok, err = _validate_paths_for_request(new_source, new_target)
+        new_target_type = updates.get('target_type', getattr(task, 'target_type', 'LOCAL'))
+        ok, err = _validate_paths_for_request(new_source, new_target, new_target_type)
         if not ok:
             return jsonify({'success': False, 'error': err}), 400
 
@@ -384,49 +435,97 @@ def api_list_directories():
     """列出指定路径下的目录"""
     is_docker = tasks_bp.is_docker
     path = request.args.get('path', '/')
+    requested_path = path
     try:
         # 安全检查：确保路径存在
         target_path = Path(path)
-        if not target_path.exists():
+        try:
+            target_exists = target_path.exists()
+        except OSError as e:
+            return jsonify({
+                'success': False,
+                'error': f'目录状态异常，可能是挂载已断开: {e}',
+                'requested_path': requested_path,
+                'current_path': str(target_path),
+                'directories': [],
+                'mount_error': True
+            })
+
+        fallback_reason = None
+        if not target_exists:
             parent = target_path.parent
-            if parent.exists() and parent.is_dir():
+            try:
+                parent_available = parent.exists() and parent.is_dir()
+            except OSError as e:
+                parent_available = False
+                fallback_reason = f'父目录状态异常，可能是挂载已断开: {e}'
+
+            if parent_available:
+                fallback_reason = f'请求目录不存在，已显示父目录: {target_path}'
                 target_path = parent
             else:
+                fallback_reason = fallback_reason or f'请求目录不存在: {target_path}'
                 target_path = Path('/') if is_docker else Path.home()
         
         # 只列出目录
         dirs = []
+        skipped_errors = []
         if target_path.is_dir():
             try:
                 for item in sorted(target_path.iterdir()):
-                    if item.is_dir():
-                        try:
+                    try:
+                        if item.is_dir():
                             item.stat()
                             dirs.append({
                                 'name': item.name,
                                 'path': str(item),
                                 'parent': str(item.parent)
                             })
-                        except (PermissionError, OSError):
-                            continue
+                    except (PermissionError, OSError) as e:
+                        skipped_errors.append(f'{item.name}: {e}')
+                        continue
             except PermissionError:
                 return jsonify({
                     'success': False,
                     'error': '没有权限访问此目录',
+                    'requested_path': requested_path,
                     'current_path': str(target_path),
                     'directories': []
                 })
+            except OSError as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'读取目录失败，可能是挂载已断开: {e}',
+                    'requested_path': requested_path,
+                    'current_path': str(target_path),
+                    'directories': [],
+                    'mount_error': True
+                })
+
+        if skipped_errors and not dirs:
+            return jsonify({
+                'success': False,
+                'error': f'目录项无法访问，可能是挂载已断开: {skipped_errors[0]}',
+                'requested_path': requested_path,
+                'current_path': str(target_path),
+                'directories': [],
+                'mount_error': True
+            })
         
         return jsonify({
             'success': True,
+            'requested_path': requested_path,
             'current_path': str(target_path),
             'parent_path': str(target_path.parent) if target_path.parent != target_path else None,
-            'directories': dirs
+            'directories': dirs,
+            'fallback': fallback_reason is not None,
+            'warning': fallback_reason
         })
     except Exception as e:
         return jsonify({
             'success': False,
             'error': str(e),
+            'requested_path': requested_path,
             'current_path': path,
             'directories': []
         })
@@ -565,6 +664,8 @@ def api_reconstruct_task(task_id: str):
     
     if task.status.value != 'IDLE':
         return jsonify({'success': False, 'error': '任务状态非空闲，无法执行'}), 400
+    if getattr(task, 'target_type', 'LOCAL') == 'WEBDAV':
+        return jsonify({'success': False, 'error': 'WebDAV 任务暂不支持缓存重构'}), 400
     
     def run_reconstruction():
         try:
